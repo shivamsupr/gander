@@ -692,7 +692,11 @@ fn fallback_summary(ordered: &[&ChunkPiece]) -> String {
         if let Some(pr) = &p.parsed {
             for line in pr.description.lines() {
                 if line.trim().to_lowercase().starts_with("**scene:**") {
-                    let rest = line.splitn(2, "**Scene:**").nth(1).unwrap_or("").trim();
+                    let rest = line
+                        .split_once("**Scene:**")
+                        .map(|(_, r)| r)
+                        .unwrap_or("")
+                        .trim();
                     return rest.chars().take(160).collect();
                 }
             }

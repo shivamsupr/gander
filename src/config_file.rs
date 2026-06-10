@@ -1,10 +1,10 @@
 //! Persisted user defaults (`~/.gander/config.toml`) + the TTY-gated first-run
-//! prompt (PLAN.md §2/§7). Holds the four selectors `model` / `backend` /
-//! `fallback_model` / `fallback_backend`.
+//! prompt. Holds the four selectors `model` / `backend` / `fallback_model` /
+//! `fallback_backend`.
 //!
-//! Per-setting precedence (resolved in `main`): flag > `GANDER_*` env > config file
-//! > built-in. The interactive prompt only fires on a real TTY (stdin+stderr); a
-//! non-interactive run (the agent path) never prompts and never writes.
+//! Per-setting precedence (resolved in `main`): flag, then `GANDER_*` env, then the
+//! config file, then the built-in default. The interactive prompt only fires on a real
+//! TTY (stdin+stderr); a non-interactive run (the agent path) never prompts or writes.
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -132,6 +132,27 @@ fn pick(label: &str, choices: &[&str]) -> String {
     }
 }
 
+pub fn write(d: &FileDefaults) -> std::io::Result<()> {
+    let path = config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+        set_mode(parent, 0o700);
+    }
+    let text = toml::to_string_pretty(d).map_err(std::io::Error::other)?;
+    std::fs::write(&path, text)?;
+    set_mode(&path, 0o600);
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_mode(path: &std::path::Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+}
+
+#[cfg(not(unix))]
+fn set_mode(_path: &std::path::Path, _mode: u32) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,25 +167,3 @@ mod tests {
         assert!(models_for("nonsense").is_empty());
     }
 }
-
-pub fn write(d: &FileDefaults) -> std::io::Result<()> {
-    let path = config_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-        set_mode(parent, 0o700);
-    }
-    let text = toml::to_string_pretty(d)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
-    std::fs::write(&path, text)?;
-    set_mode(&path, 0o600);
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_mode(path: &std::path::Path, mode: u32) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
-}
-
-#[cfg(not(unix))]
-fn set_mode(_path: &std::path::Path, _mode: u32) {}

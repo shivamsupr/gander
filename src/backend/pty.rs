@@ -158,7 +158,7 @@ fn reap_tree(pid: Option<u32>, child: &mut Box<dyn portable_pty::Child + Send + 
 }
 
 fn to_io<E: std::fmt::Display>(e: E) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+    std::io::Error::other(e.to_string())
 }
 
 #[cfg(test)]
