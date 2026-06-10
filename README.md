@@ -83,6 +83,36 @@ prompt does not elicit agy's sentinel block; agy works fine in real describe run
 Video CHUNKED runs are slow (one backend call per chunk plus a synthesis call), so a
 >60s clip can take a few minutes.
 
+## Dev tasks (`just`)
+
+[`just`](https://github.com/casey/just) wraps the common workflows (`just` with no
+argument lists them all):
+
+| Recipe | What it does |
+|---|---|
+| `just build` / `just release` | debug / optimized build |
+| `just test` | the deterministic test suite |
+| `just test-live` | the live agy smoke test (`#[ignore]`d otherwise) |
+| `just fmt` / `just clippy` | format / lint (warnings as errors) |
+| `just ci` | fmt-check + clippy + test (mirrors GitHub Actions) |
+| `just describe SOURCE *ARGS` | run on a file → JSON envelope (flags pass through) |
+| `just check` | health-probe the backends + ffmpeg |
+| `just recall *ARGS` | browse the cache |
+| `just config path \| show \| clear` | inspect / reset persisted defaults |
+| `just cache path` · `just cache clear [SOURCE]` | inspect / clear the result cache |
+| `just reconfigure` | re-run the interactive first-run picker |
+| `just musl [TARGET]` | static Linux build via `cross` |
+| `just clean` | `cargo clean` |
+
+Examples:
+
+```sh
+just describe image.png --backend codex --model gpt-5.4
+just cache clear image.png        # forget one asset
+just cache clear                  # forget all
+just ci                           # everything CI gates on, locally
+```
+
 ## Usage
 
 ```sh
