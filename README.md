@@ -24,9 +24,10 @@ takes a gander and tells you what it sees.
 
 ```sh
 just release        # → target/release/gander  (single ~6 MB binary)
-just install        # or: install to ~/.cargo/bin so `gander` is on PATH
 just test           # 54 deterministic tests, no live backends
 ```
+
+See [Install](#install) to put `gander` on your `PATH`.
 
 The binary statically bundles SQLite (`rusqlite` `bundled`), so there is no libsqlite
 runtime dependency. A fully static musl build for Linux release artifacts is best done
@@ -57,6 +58,16 @@ vars):
 `gander` shells out to whichever backend you select; **each backend handles its own
 login through its own CLI — gander never sees credentials.** Everything else (SQLite) is
 statically bundled into the binary, so there is nothing else to install at runtime.
+
+## Install
+
+Build the binary and copy it onto your `PATH` (macOS and Linux):
+
+```sh
+just release
+sudo install -m 755 target/release/gander /usr/local/bin/gander
+gander --version        # verify it's on PATH
+```
 
 ## Quickstart
 
