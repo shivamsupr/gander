@@ -49,6 +49,15 @@ check:
 recall *ARGS:
     cargo run --quiet -- recall {{ARGS}}
 
+# Inspect or reset persisted defaults: `path` | `show` | `clear`.
+#   just config path   ·   just config clear
+config *ARGS:
+    cargo run --quiet -- config {{ARGS}}
+
+# Re-run the interactive first-run picker (rewrites the config file).
+reconfigure:
+    cargo run --quiet -- --reconfigure
+
 # Static musl release build for Linux artifacts (needs `cross` / Docker).
 #   just musl x86_64-unknown-linux-musl
 musl TARGET="x86_64-unknown-linux-musl":
