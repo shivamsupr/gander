@@ -140,6 +140,9 @@ gander --version
 | `--timeout S` | `300` | per-backend wall-clock seconds |
 | `--reconfigure` | — | re-run the interactive first-run setup |
 | `--no-config` | off | ignore the persisted config file for this run |
+| `--check` | — | health-probe the backends + ffmpeg (ignores SOURCE) |
+| `-V`, `--version` | — | print version and exit |
+| `-h`, `--help` | — | print help |
 
 ### Primary → fallback
 
@@ -165,7 +168,15 @@ gander recall [--keyword K] [--text T] [--rating {keep,review,cull}] [--language
               [--has-transcript|--no-transcript] [--has-audio|--no-audio] [--chunked]
               [--include-failed] [--all-versions]
               [--order-by {updated_at,created_at,rating,people_count,duration_seconds}]
-              [--asc] [--limit N] [--output-format {raw,json}]
+              [--asc] [--limit N] [--db PATH] [--output-format {raw,json}]
+```
+
+### Config & cache subcommands
+
+```
+gander config path | show | clear        # ~/.gander/config.toml
+gander cache  path                       # print the cache DB path
+gander cache  clear [SOURCE] [--db PATH] # forget all assets, or just one file
 ```
 
 ## Output envelope (`--output-format=json`)
