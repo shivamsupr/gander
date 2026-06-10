@@ -131,7 +131,7 @@ gander --version
 | `--max-frames N` | `12` | evenly-spaced frames per clip/chunk (clamped `[1,64]`) |
 | `--fps RATE` | — | fixed-rate frame sampling, capped by `--max-frames` |
 | `--chunk-length S` | `60` | segment length for the chunked tier |
-| `--max-chunks N` | `20` | cap on chunks; over-limit ⇒ widen segment length |
+| `--max-chunks N` | `8` | cap on chunks; over-limit ⇒ widen segment length |
 | `--max-duration S` | unset | hard-reject videos longer than S |
 | `--force` | off | ignore any cached row and recompute |
 | `--keep-temp` | off | keep the per-call temp workdir (path on stderr) |

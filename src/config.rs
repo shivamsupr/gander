@@ -31,7 +31,7 @@ pub const CODEX_DEFAULT_MODEL: &str = "gpt-5.5";
 pub const DIRECT_MAX_S: f64 = 30.0; // d <  DIRECT_MAX_S            -> DIRECT
 pub const BATCH_MAX_S: f64 = 60.0; //  DIRECT_MAX_S <= d <= BATCH   -> SINGLE_BATCH ; d > BATCH -> CHUNKED
 pub const CHUNK_LEN_S: f64 = 60.0;
-pub const MAX_CHUNKS: u32 = 20;
+pub const MAX_CHUNKS: u32 = 8;
 
 // Frame sampling.
 pub const MAX_FRAMES: u32 = 12;
