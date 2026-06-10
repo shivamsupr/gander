@@ -65,9 +65,18 @@ Build the binary and copy it onto your `PATH` (macOS and Linux):
 
 ```sh
 just release
+
+# user-local (no sudo) — ensure ~/.local/bin is on your PATH:
+install -m 755 target/release/gander ~/.local/bin/gander
+
+# or system-wide (sudo, on PATH everywhere by default):
 sudo install -m 755 target/release/gander /usr/local/bin/gander
+
 gander --version        # verify it's on PATH
 ```
+
+`sudo` is only needed for the system-wide path because `/usr/local/bin` is root-owned;
+the user-local option needs none.
 
 ## Quickstart
 
