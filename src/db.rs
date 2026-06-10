@@ -160,6 +160,16 @@ pub fn lookup(conn: &Connection, sha: &str) -> Option<MediaResult> {
     Some(r)
 }
 
+/// Delete every cached row (keywords cascade). Returns the number of media rows removed.
+pub fn clear_all(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.execute("DELETE FROM media", [])
+}
+
+/// Forget one asset by content hash (keywords cascade). Returns rows removed (0 or 1).
+pub fn forget(conn: &Connection, sha: &str) -> rusqlite::Result<usize> {
+    conn.execute("DELETE FROM media WHERE content_sha256 = ?1", [sha])
+}
+
 fn row_to_result(row: &Row) -> rusqlite::Result<MediaResult> {
     let status_s: String = row.get("status")?;
     let structured_json: String = row.get("structured_json")?;
@@ -586,6 +596,26 @@ mod tests {
         assert_eq!(got.transcript.as_deref(), Some("Esta es una prueba"));
         assert_eq!(got.structured.unwrap().shot_type, "varies");
         assert!(got.media.chunked && got.media.chunk_count == 6);
+    }
+
+    #[test]
+    fn forget_and_clear_all() {
+        let (_d, mut c) = temp_conn();
+        upsert(&mut c, &sample(), false).unwrap();
+        // forget a hash that is not present → 0 removed, row still there.
+        assert_eq!(forget(&c, "nope").unwrap(), 0);
+        assert!(lookup(&c, "abc123").is_some());
+        // forget the real hash → 1 removed, keywords cascade away.
+        assert_eq!(forget(&c, "abc123").unwrap(), 1);
+        assert!(lookup(&c, "abc123").is_none());
+        let kw: i64 = c
+            .query_row("SELECT count(*) FROM keywords", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(kw, 0);
+        // clear_all on a re-seeded cache removes every row.
+        upsert(&mut c, &sample(), false).unwrap();
+        assert_eq!(clear_all(&c).unwrap(), 1);
+        assert!(lookup(&c, "abc123").is_none());
     }
 
     #[test]

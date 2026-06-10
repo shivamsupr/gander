@@ -54,6 +54,13 @@ recall *ARGS:
 config *ARGS:
     cargo run --quiet -- config {{ARGS}}
 
+# Inspect or clear the result cache.
+#   just cache path                     # print the DB path
+#   just cache clear                    # forget ALL cached assets
+#   just cache clear path/to/file.png   # forget one asset
+cache *ARGS:
+    cargo run --quiet -- cache {{ARGS}}
+
 # Re-run the interactive first-run picker (rewrites the config file).
 reconfigure:
     cargo run --quiet -- --reconfigure

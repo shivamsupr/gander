@@ -54,7 +54,81 @@ fn main() -> ExitCode {
     match cli.command {
         Some(Command::Recall(args)) => cmd_recall(args),
         Some(Command::Config(args)) => cmd_config(args),
+        Some(Command::Cache(args)) => cmd_cache(args),
         None => dispatch_describe(cli.describe),
+    }
+}
+
+fn cmd_cache(args: cli::CacheArgs) -> ExitCode {
+    use cli::CacheAction::*;
+    let (db, source) = match &args.action {
+        Path { db } => (db.clone(), None),
+        Clear { db, source } => (db.clone(), source.clone()),
+    };
+    let cfg = Config::load(&ConfigOverrides {
+        db_path: db,
+        ..Default::default()
+    });
+
+    if matches!(args.action, Path { .. }) {
+        println!("{}", cfg.db_path.display());
+        return ExitCode::from(EXIT_OK);
+    }
+
+    let conn = match db::connect(&cfg.db_path, cfg.db_busy_timeout_ms) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("gander: cannot open db: {e}");
+            return ExitCode::from(EXIT_UNEXPECTED);
+        }
+    };
+
+    match source {
+        // Clear the whole cache.
+        None => match db::clear_all(&conn) {
+            Ok(n) => {
+                eprintln!(
+                    "gander: cleared {n} cached entr{}",
+                    if n == 1 { "y" } else { "ies" }
+                );
+                ExitCode::from(EXIT_OK)
+            }
+            Err(e) => {
+                eprintln!("gander: clear failed: {e}");
+                ExitCode::from(EXIT_UNEXPECTED)
+            }
+        },
+        // Forget one asset by content hash.
+        Some(src) => {
+            let path = match crate::source::validate_path(&src, None, None) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("gander: {e}");
+                    return ExitCode::from(EXIT_INPUT);
+                }
+            };
+            let sha = match crate::source::sha256_file(&path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("gander: hash failed: {e}");
+                    return ExitCode::from(EXIT_UNEXPECTED);
+                }
+            };
+            match db::forget(&conn, &sha) {
+                Ok(1) => {
+                    eprintln!("gander: forgot {} ({}…)", path.display(), &sha[..8]);
+                    ExitCode::from(EXIT_OK)
+                }
+                Ok(_) => {
+                    eprintln!("gander: not cached: {}", path.display());
+                    ExitCode::from(EXIT_OK)
+                }
+                Err(e) => {
+                    eprintln!("gander: forget failed: {e}");
+                    ExitCode::from(EXIT_UNEXPECTED)
+                }
+            }
+        }
     }
 }
 

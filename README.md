@@ -89,6 +89,8 @@ Video CHUNKED runs are slow (one backend call per chunk plus a synthesis call), 
 gander SOURCE [options]                 # describe one local file
 gander recall [filters]                 # read-only cache browse (no model call)
 gander config {path,show,clear}         # inspect / reset persisted defaults
+gander cache path                       # print the cache DB path
+gander cache clear [SOURCE]             # forget all assets, or just one file
 gander --check                          # health-probe the backends + ffmpeg
 gander --version
 ```

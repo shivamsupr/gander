@@ -127,6 +127,30 @@ pub enum Command {
     Recall(RecallArgs),
     /// Inspect or reset the persisted defaults (~/.gander/config.toml).
     Config(ConfigArgs),
+    /// Inspect or clear the result cache (~/.gander/media.db).
+    Cache(CacheArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CacheArgs {
+    #[command(subcommand)]
+    pub action: CacheAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CacheAction {
+    /// Print the cache DB path.
+    Path {
+        #[arg(long, value_name = "PATH")]
+        db: Option<String>,
+    },
+    /// Remove cached entries: all of them, or just one SOURCE file.
+    Clear {
+        /// A media file to forget (by content hash). Omit to clear the whole cache.
+        source: Option<String>,
+        #[arg(long, value_name = "PATH")]
+        db: Option<String>,
+    },
 }
 
 #[derive(Debug, clap::Args)]
