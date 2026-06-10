@@ -55,48 +55,30 @@ vars):
 | `agy` and/or `claude` and/or `codex` | the analysis backend(s) — **at least one** | each is its own CLI, installed + logged in separately |
 
 `gander` shells out to whichever backend you select; **each backend handles its own
-login through its own CLI — gander never sees credentials.** Run `gander --check` to
-verify what's reachable. Everything else (SQLite) is statically bundled into the binary,
-so there is nothing else to install at runtime.
+login through its own CLI — gander never sees credentials.** Everything else (SQLite) is
+statically bundled into the binary, so there is nothing else to install at runtime.
+
+## Quickstart
+
+```sh
+gander --check                            # verify which backends are reachable
+gander photo.jpg                          # describe → human-readable text
+gander clip.mp4 --output-format json      # describe → JSON envelope
+gander recall                             # browse what you've already analyzed
+```
+
+Re-running on the same file is an instant `$0` cache hit. See [Usage](#usage) for all
+flags.
 
 ## Testing
 
-**Deterministic suite** (fast, no backends, no network) — parsing, the merge fold,
-db round-trip, source validation, prompts, ffmpeg planning, envelope shape:
-
 ```sh
-just test           # ~54 tests, ~1s; this is what CI gates on
+just test           # ~54 deterministic tests, ~1s (no backends); CI gates on this
+just test-live      # optional live smoke against a real agy backend
 ```
 
-**Live backend smoke** (real agy) is `#[ignore]`d so it never runs by accident:
-
-```sh
-just test-live
-```
-
-**Manual end-to-end** (use a throwaway `--db` so you don't touch `~/.gander/media.db`):
-
-```sh
-just describe image.png                                 # → JSON envelope
-just run image.png --backend codex --fallback-backend none  # force one backend
-
-just run image.png --db /tmp/t.db                       # cold (calls the backend)
-just run image.png --db /tmp/t.db                       # warm  → cached:true, $0
-
-just recall --db /tmp/t.db                              # browse the cache (no model call)
-just check                                              # health-probe backends + ffmpeg
-```
-
-**Exit-code contract:**
-
-```sh
-just run good.png; echo $?                              # 0  ok/partial
-just run x.png --backend agy --model sonnet; echo $?    # 2  usage (mismatch)
-just run /does/not/exist; echo $?                       # 3  input
-```
-
-Notes: `--check` may report agy as *down* — a probe artifact, since the no-media health
-prompt does not elicit agy's sentinel block; agy works fine in real describe runs.
+Notes: `gander --check` may report agy as *down* — a probe artifact, since the no-media
+health prompt does not elicit agy's sentinel block; agy works fine in real describe runs.
 Video CHUNKED runs are slow (one backend call per chunk plus a synthesis call), so a
 >60s clip can take a few minutes.
 
