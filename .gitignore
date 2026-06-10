@@ -1,0 +1,18 @@
+# Rust build output
+/target
+
+# macOS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# local cache / test artifacts (the real DB lives in ~/.gander)
+*.db
+*.db-wal
+*.db-shm
+
+# Note: Cargo.lock IS committed (this is a binary crate).
+
+# internal planning doc — not part of the public repo
+PLAN.md

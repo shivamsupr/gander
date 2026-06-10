@@ -1,0 +1,25 @@
+[package]
+name = "gander"
+version = "0.1.0"
+edition = "2021"
+description = "Understand a local media file: transcript + structured description, via an agentic CLI backend."
+license = "MIT"
+
+[[bin]]
+name = "gander"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+dirs = "6.0.0"
+inquire = "0.9.4"
+nix = { version = "0.31.3", features = ["signal", "process", "fs"] }
+portable-pty = "0.9.0"
+regex = "1.12.4"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+serde_yaml = "0.9.34"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
+toml = "1.1.2"
