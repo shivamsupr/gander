@@ -13,6 +13,15 @@ build:
 release:
     cargo build --release
 
+# Install the `gander` binary to ~/.cargo/bin (must be on PATH).
+install:
+    cargo install --path . --locked
+
+# Run gander with arbitrary args (debug build).
+#   just run image.png --output-format json
+run *ARGS:
+    cargo run --quiet -- {{ARGS}}
+
 # Deterministic test suite (no live backends, no network).
 test:
     cargo test --bin gander

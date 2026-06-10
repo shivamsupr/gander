@@ -24,7 +24,7 @@ takes a gander and tells you what it sees.
 
 ```sh
 cargo build --release        # → target/release/gander  (single ~6 MB binary)
-cargo test                   # 52 deterministic tests, no live backends
+cargo test                   # 54 deterministic tests, no live backends
 ```
 
 The binary statically bundles SQLite (`rusqlite` `bundled`), so there is no libsqlite
@@ -32,11 +32,32 @@ runtime dependency. A fully static musl build for Linux release artifacts is bes
 on Linux CI or via [`cross`](https://github.com/cross-rs/cross) (the bundled SQLite C
 sources need a musl cross-toolchain).
 
-## Requirements
+## Dependencies
 
-On `PATH` (or pointed to via `GANDER_*_BIN` env vars): `ffmpeg`, `ffprobe`, and at
-least one backend — `agy`, `claude`, or `codex`. Each backend handles its own login
-through its own CLI; gander never sees credentials.
+**To build** — the Rust toolchain (and [`just`](https://github.com/casey/just) for the
+dev recipes, optional):
+
+```sh
+# Rust (https://rustup.rs)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# just (optional, for `just <recipe>`)
+brew install just          # macOS
+cargo install just         # any platform
+```
+
+**To run** — these external binaries on `PATH` (or pointed to via `GANDER_*_BIN` env
+vars):
+
+| Binary | Purpose | Install |
+|---|---|---|
+| `ffmpeg`, `ffprobe` | probe / segment / frame + audio extraction | `brew install ffmpeg` · `apt install ffmpeg` |
+| `agy` and/or `claude` and/or `codex` | the analysis backend(s) — **at least one** | each is its own CLI, installed + logged in separately |
+
+`gander` shells out to whichever backend you select; **each backend handles its own
+login through its own CLI — gander never sees credentials.** Run `gander --check` to
+verify what's reachable. Everything else (SQLite) is statically bundled into the binary,
+so there is nothing else to install at runtime.
 
 ## Testing
 
@@ -44,7 +65,7 @@ through its own CLI; gander never sees credentials.
 db round-trip, source validation, prompts, ffmpeg planning, envelope shape:
 
 ```sh
-cargo test --bin gander          # ~52 tests, ~1s; this is what CI gates on
+cargo test --bin gander          # ~54 tests, ~1s; this is what CI gates on
 ```
 
 **Live backend smoke** (real agy) is `#[ignore]`d so it never runs by accident:
@@ -91,6 +112,8 @@ argument lists them all):
 | Recipe | What it does |
 |---|---|
 | `just build` / `just release` | debug / optimized build |
+| `just install` | `cargo install` the binary to `~/.cargo/bin` |
+| `just run *ARGS` | run gander with arbitrary args (debug build) |
 | `just test` | the deterministic test suite |
 | `just test-live` | the live agy smoke test (`#[ignore]`d otherwise) |
 | `just fmt` / `just clippy` | format / lint (warnings as errors) |
