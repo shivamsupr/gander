@@ -23,14 +23,14 @@ takes a gander and tells you what it sees.
 ## Build
 
 ```sh
-cargo build --release        # → target/release/gander  (single ~6 MB binary)
-cargo test                   # 54 deterministic tests, no live backends
+just release        # → target/release/gander  (single ~6 MB binary)
+just install        # or: install to ~/.cargo/bin so `gander` is on PATH
+just test           # 54 deterministic tests, no live backends
 ```
 
 The binary statically bundles SQLite (`rusqlite` `bundled`), so there is no libsqlite
 runtime dependency. A fully static musl build for Linux release artifacts is best done
-on Linux CI or via [`cross`](https://github.com/cross-rs/cross) (the bundled SQLite C
-sources need a musl cross-toolchain).
+on Linux CI or via [`cross`](https://github.com/cross-rs/cross) (`just musl`).
 
 ## Dependencies
 
@@ -65,38 +65,34 @@ so there is nothing else to install at runtime.
 db round-trip, source validation, prompts, ffmpeg planning, envelope shape:
 
 ```sh
-cargo test --bin gander          # ~54 tests, ~1s; this is what CI gates on
+just test           # ~54 tests, ~1s; this is what CI gates on
 ```
 
 **Live backend smoke** (real agy) is `#[ignore]`d so it never runs by accident:
 
 ```sh
-cargo test --bin gander -- --ignored agy_smoke --nocapture
+just test-live
 ```
 
-**Manual end-to-end** against the release binary (use a throwaway `--db` so you don't
-touch `~/.gander/media.db`):
+**Manual end-to-end** (use a throwaway `--db` so you don't touch `~/.gander/media.db`):
 
 ```sh
-cargo build --release
-B=./target/release/gander
+just describe image.png                                 # → JSON envelope
+just run image.png --backend codex --fallback-backend none  # force one backend
 
-$B image.png --output-format json                 # describe → JSON envelope
-$B image.png --backend codex --fallback-backend none   # force one backend
+just run image.png --db /tmp/t.db                       # cold (calls the backend)
+just run image.png --db /tmp/t.db                       # warm  → cached:true, $0
 
-$B image.png --db /tmp/t.db                        # cold (calls the backend)
-$B image.png --db /tmp/t.db                        # warm  → cached:true, $0
-
-$B recall --db /tmp/t.db                           # browse the cache (no model call)
-$B --check                                         # health-probe backends + ffmpeg
+just recall --db /tmp/t.db                              # browse the cache (no model call)
+just check                                              # health-probe backends + ffmpeg
 ```
 
 **Exit-code contract:**
 
 ```sh
-$B good.png; echo $?                               # 0  ok/partial
-$B --backend agy --model sonnet x.png; echo $?     # 2  usage (mismatch)
-$B /does/not/exist; echo $?                        # 3  input
+just run good.png; echo $?                              # 0  ok/partial
+just run x.png --backend agy --model sonnet; echo $?    # 2  usage (mismatch)
+just run /does/not/exist; echo $?                       # 3  input
 ```
 
 Notes: `--check` may report agy as *down* — a probe artifact, since the no-media health
