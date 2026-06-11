@@ -163,10 +163,10 @@ capacity(429)/timeout/transient/empty/unparseable it **demotes** to the fallback
 ### Recall
 
 ```
-gander recall [--keyword K] [--text T] [--rating {keep,review,cull}] [--language L]
-              [--kind {image,video,audio}] [--min-people N] [--min-duration S]
-              [--has-transcript|--no-transcript] [--has-audio|--no-audio] [--chunked]
-              [--include-failed] [--all-versions]
+gander recall [--query Q] [--keyword K] [--text T] [--rating {keep,review,cull}]
+              [--language L] [--kind {image,video,audio}] [--min-people N]
+              [--min-duration S] [--has-transcript|--no-transcript]
+              [--has-audio|--no-audio] [--chunked] [--include-failed] [--all-versions]
               [--order-by {updated_at,created_at,rating,people_count,duration_seconds}]
               [--asc] [--limit N] [--db PATH] [--output-format {raw,json}]
 ```
@@ -177,6 +177,18 @@ gander recall [--keyword K] [--text T] [--rating {keep,review,cull}] [--language
 gander config path | show | clear        # ~/.gander/config.toml
 gander cache  path                       # print the cache DB path
 gander cache  clear [SOURCE] [--db PATH] # forget all assets, or just one file
+```
+
+`--query` is full-text search (SQLite FTS5, BM25-ranked, porter-stemmed) over
+summary, description, transcript, English translation, keywords, and filename.
+Results come back best-match first (unless `--order-by` is given), each with the
+asset's `source_path` and a `match_context` snippet showing why it matched.
+FTS5 query syntax passes through (`steel OR crane`, `transcript:prueba`, `weld*`);
+strings that fail to parse as FTS5 are retried as plain quoted terms.
+
+```sh
+gander recall --query "steel beam"        # ranked full-text search
+gander recall --query worker --kind video --rating keep
 ```
 
 ## Output envelope (`--output-format=json`)

@@ -68,6 +68,12 @@ CREATE TABLE IF NOT EXISTS keywords (
     PRIMARY KEY (content_sha256, keyword)
 );
 CREATE INDEX IF NOT EXISTS idx_keywords_keyword ON keywords(keyword);
+CREATE VIRTUAL TABLE IF NOT EXISTS media_fts USING fts5(
+    content_sha256 UNINDEXED,
+    summary, description, transcript, english_translation,
+    keywords, source_filename,
+    tokenize='porter unicode61'
+);
 "#;
 
 /// Open (creating dirs + file + schema on first use). One conn per process.
@@ -83,10 +89,43 @@ pub fn connect(db_path: &Path, busy_timeout_ms: i64) -> rusqlite::Result<Connect
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.execute_batch(SCHEMA_DDL)?;
+    sync_fts(&conn)?;
     if fresh {
         set_mode(db_path, 0o600);
     }
     Ok(conn)
+}
+
+/// Bring `media_fts` in line with `media` (backfill for DBs that predate the FTS
+/// index, self-heal for any drift). Steady state: two count(*) scans, no writes.
+fn sync_fts(conn: &Connection) -> rusqlite::Result<()> {
+    let in_sync: bool = conn.query_row(
+        "SELECT (SELECT count(*) FROM media) = (SELECT count(*) FROM media_fts)",
+        [],
+        |r| r.get(0),
+    )?;
+    if in_sync {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM media_fts WHERE content_sha256 NOT IN
+           (SELECT content_sha256 FROM media)",
+        [],
+    )?;
+    tx.execute(
+        "INSERT INTO media_fts (content_sha256, summary, description, transcript,
+             english_translation, keywords, source_filename)
+         SELECT m.content_sha256, m.summary, m.description, m.transcript,
+                m.english_translation,
+                (SELECT group_concat(k.keyword, ' ') FROM keywords k
+                  WHERE k.content_sha256 = m.content_sha256),
+                m.source_filename
+         FROM media m
+         WHERE m.content_sha256 NOT IN (SELECT content_sha256 FROM media_fts)",
+        [],
+    )?;
+    tx.commit()
 }
 
 #[cfg(unix)]
@@ -162,12 +201,20 @@ pub fn lookup(conn: &Connection, sha: &str) -> Option<MediaResult> {
 
 /// Delete every cached row (keywords cascade). Returns the number of media rows removed.
 pub fn clear_all(conn: &Connection) -> rusqlite::Result<usize> {
-    conn.execute("DELETE FROM media", [])
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM media_fts", [])?;
+    let n = tx.execute("DELETE FROM media", [])?;
+    tx.commit()?;
+    Ok(n)
 }
 
 /// Forget one asset by content hash (keywords cascade). Returns rows removed (0 or 1).
 pub fn forget(conn: &Connection, sha: &str) -> rusqlite::Result<usize> {
-    conn.execute("DELETE FROM media WHERE content_sha256 = ?1", [sha])
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM media_fts WHERE content_sha256 = ?1", [sha])?;
+    let n = tx.execute("DELETE FROM media WHERE content_sha256 = ?1", [sha])?;
+    tx.commit()?;
+    Ok(n)
 }
 
 fn row_to_result(row: &Row) -> rusqlite::Result<MediaResult> {
@@ -335,20 +382,48 @@ pub fn upsert(conn: &mut Connection, r: &MediaResult, force: bool) -> rusqlite::
                 ":updated_at": now,
             },
         )?;
-        insert_keywords(&tx, &sha, &s.keywords)?;
+        let keywords = normalize_keywords(&s.keywords);
+        insert_keywords(&tx, &sha, &keywords)?;
+        let kw_text = if keywords.is_empty() {
+            None
+        } else {
+            Some(keywords.join(" "))
+        };
+        tx.execute("DELETE FROM media_fts WHERE content_sha256 = ?1", [&sha])?;
+        tx.execute(
+            "INSERT INTO media_fts (content_sha256, summary, description, transcript,
+                 english_translation, keywords, source_filename)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                sha,
+                none_if_empty(&r.summary),
+                none_if_empty(&r.description),
+                stored_transcript,
+                r.english_translation,
+                kw_text,
+                source_filename,
+            ],
+        )?;
     }
     tx.commit()
 }
 
+/// Trim, lowercase, drop empties, dedup (stable BTreeSet order).
+fn normalize_keywords(keywords: &[String]) -> Vec<String> {
+    keywords
+        .iter()
+        .map(|kw| kw.trim().to_lowercase())
+        .filter(|k| !k.is_empty())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 fn insert_keywords(conn: &Connection, sha: &str, keywords: &[String]) -> rusqlite::Result<()> {
-    let mut seen = std::collections::BTreeSet::new();
     let mut stmt =
         conn.prepare("INSERT OR IGNORE INTO keywords (content_sha256, keyword) VALUES (?1, ?2)")?;
-    for kw in keywords {
-        let k = kw.trim().to_lowercase();
-        if !k.is_empty() && seen.insert(k.clone()) {
-            stmt.execute(rusqlite::params![sha, k])?;
-        }
+    for k in keywords {
+        stmt.execute(rusqlite::params![sha, k])?;
     }
     Ok(())
 }
@@ -382,6 +457,7 @@ impl Status {
 pub struct RecallFilters {
     pub keyword: Option<String>,
     pub text: Option<String>,
+    pub query: Option<String>,
     pub rating: Option<String>,
     pub language: Option<String>,
     pub media_kind: Option<String>,
@@ -392,7 +468,8 @@ pub struct RecallFilters {
     pub chunked: Option<bool>,
     pub include_failed: bool,
     pub all_versions: bool,
-    pub order_by: String,
+    /// `None` = default order (`updated_at`, or best match when `query` is set).
+    pub order_by: Option<String>,
     pub descending: bool,
     pub limit: i64,
 }
@@ -404,7 +481,37 @@ fn escape_like(s: &str) -> String {
 }
 
 /// Read-only cache browse. Returns rows as JSON objects (the recall envelope).
+/// `f.query` is FTS5 syntax tried raw first (NEAR, OR, col:, prefix* all work);
+/// on an FTS5 syntax error every token is double-quoted and the search retried.
 pub fn recall(conn: &Connection, f: &RecallFilters) -> rusqlite::Result<Vec<serde_json::Value>> {
+    let query = f.query.as_deref().map(str::trim).filter(|q| !q.is_empty());
+    match (run_recall(conn, f, query), query) {
+        (Err(ref e), Some(q)) if is_fts_query_error(e) => run_recall(conn, f, Some(&fts_quote(q))),
+        (r, _) => r,
+    }
+}
+
+/// FTS5 reports bad query strings at step time as a plain SQLITE_ERROR with a
+/// recognizable message — the only signal we have to distinguish them.
+fn is_fts_query_error(e: &rusqlite::Error) -> bool {
+    matches!(e, rusqlite::Error::SqliteFailure(fe, Some(msg))
+        if fe.extended_code == 1
+        && (msg.starts_with("fts5:") || msg.starts_with("no such column")))
+}
+
+/// Neutralize FTS5 operators: every whitespace token becomes a quoted phrase.
+fn fts_quote(q: &str) -> String {
+    q.split_whitespace()
+        .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn run_recall(
+    conn: &Connection,
+    f: &RecallFilters,
+    query: Option<&str>,
+) -> rusqlite::Result<Vec<serde_json::Value>> {
     let mut where_clauses: Vec<String> = Vec::new();
     let mut params: Vec<rusqlite::types::Value> = Vec::new();
 
@@ -464,6 +571,10 @@ pub fn recall(conn: &Connection, f: &RecallFilters) -> rusqlite::Result<Vec<serd
         params.push(like.clone().into());
         params.push(like.into());
     }
+    if let Some(q) = query {
+        where_clauses.push("media_fts MATCH ?".into());
+        params.push(q.to_string().into());
+    }
 
     let allowed = [
         "updated_at",
@@ -472,15 +583,25 @@ pub fn recall(conn: &Connection, f: &RecallFilters) -> rusqlite::Result<Vec<serd
         "people_count",
         "duration_seconds",
     ];
-    let ob = if allowed.contains(&f.order_by.as_str()) {
-        f.order_by.as_str()
-    } else {
-        "updated_at"
-    };
     let direction = if f.descending { "DESC" } else { "ASC" };
+    // Explicit --order-by wins even with a query; a query alone ranks by bm25
+    // (ASC = best match first, so --asc/--desc deliberately does not apply).
+    let order_sql = match f.order_by.as_deref().filter(|o| allowed.contains(o)) {
+        Some(ob) => format!("m.{ob} {direction}"),
+        None if query.is_some() => "bm25(media_fts)".to_string(),
+        None => format!("m.updated_at {direction}"),
+    };
     let limit = f.limit.clamp(1, 500);
     params.push(limit.into());
 
+    let (snippet_col, join_sql) = if query.is_some() {
+        (
+            ",\n  snippet(media_fts, -1, '**', '**', '…', 12) AS match_context",
+            " JOIN media_fts ON media_fts.content_sha256 = m.content_sha256",
+        )
+    } else {
+        ("", "")
+    };
     let where_sql = if where_clauses.is_empty() {
         String::new()
     } else {
@@ -491,10 +612,10 @@ pub fn recall(conn: &Connection, f: &RecallFilters) -> rusqlite::Result<Vec<serd
                 m.people_count, m.has_transcript, m.has_audio,
                 m.duration_seconds, m.was_chunked, m.chunk_count,
                 m.width, m.height, m.summary, m.description, m.transcript,
-                m.source_filename, m.model_used, m.backend_used,
-                m.created_at, m.updated_at
-         FROM media m {where_sql}
-         ORDER BY m.{ob} {direction}
+                m.source_path, m.source_filename, m.model_used, m.backend_used,
+                m.created_at, m.updated_at{snippet_col}
+         FROM media m{join_sql} {where_sql}
+         ORDER BY {order_sql}
          LIMIT ?"
     );
 
@@ -663,7 +784,7 @@ mod tests {
 
     fn filters(f: impl FnOnce(&mut RecallFilters)) -> RecallFilters {
         let mut rf = RecallFilters {
-            order_by: "updated_at".into(),
+            order_by: None,
             descending: true,
             limit: 20,
             ..Default::default()
@@ -729,5 +850,151 @@ mod tests {
     fn escape_like_escapes_wildcards() {
         assert_eq!(escape_like("100%"), "100\\%");
         assert_eq!(escape_like("foo_bar"), "foo\\_bar");
+    }
+
+    fn fts_count(conn: &Connection) -> i64 {
+        conn.query_row("SELECT count(*) FROM media_fts", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn fts_query_matches_and_ranks() {
+        let (_d, mut c) = temp_conn();
+        upsert(&mut c, &sample(), false).unwrap();
+        let rows = recall(&c, &filters(|f| f.query = Some("steel".into()))).unwrap();
+        assert_eq!(rows.len(), 1);
+        let ctx = rows[0]["match_context"].as_str().unwrap();
+        assert!(ctx.contains("**steel"), "snippet should highlight: {ctx}");
+        assert_eq!(rows[0]["source_path"], "/x/clip_es.mp4");
+        // No query → no match_context column, but source_path is still there.
+        let rows = recall(&c, &filters(|_| {})).unwrap();
+        assert!(rows[0].get("match_context").is_none());
+        assert_eq!(rows[0]["source_path"], "/x/clip_es.mp4");
+        // Query that matches nothing.
+        assert!(recall(&c, &filters(|f| f.query = Some("zebra".into())))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn fts_porter_stemming_and_keywords() {
+        let (_d, mut c) = temp_conn();
+        upsert(&mut c, &sample(), false).unwrap();
+        // "workers" stems to the "worker" keyword; proves keywords are indexed.
+        let rows = recall(&c, &filters(|f| f.query = Some("workers".into()))).unwrap();
+        assert_eq!(rows.len(), 1);
+        // Transcript and translation are indexed too.
+        for q in ["prueba", "test"] {
+            assert_eq!(
+                recall(&c, &filters(|f| f.query = Some(q.into())))
+                    .unwrap()
+                    .len(),
+                1,
+                "query {q:?} should match"
+            );
+        }
+    }
+
+    #[test]
+    fn fts_syntax_error_fallback() {
+        let (_d, mut c) = temp_conn();
+        upsert(&mut c, &sample(), false).unwrap();
+        // Raw "steel (beam" is an FTS5 syntax error → quoted retry matches.
+        let rows = recall(&c, &filters(|f| f.query = Some("steel (beam".into()))).unwrap();
+        assert_eq!(rows.len(), 1);
+        // Garbage that stays garbage after quoting still must not error.
+        let rows = recall(&c, &filters(|f| f.query = Some("AND (".into()))).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn fts_empty_query_is_browse() {
+        let (_d, mut c) = temp_conn();
+        upsert(&mut c, &sample(), false).unwrap();
+        let rows = recall(&c, &filters(|f| f.query = Some("   ".into()))).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].get("match_context").is_none());
+    }
+
+    #[test]
+    fn fts_stays_in_sync_on_upsert() {
+        let (_d, mut c) = temp_conn();
+        upsert(&mut c, &sample(), false).unwrap();
+        let mut changed = sample();
+        // "places" lives only in the old summary ("beam"/"worker" would still
+        // match via the keywords column).
+        changed.summary = "A crane lifts a concrete slab.".into();
+        for force in [false, true] {
+            upsert(&mut c, &changed, force).unwrap();
+            assert_eq!(fts_count(&c), 1);
+            assert_eq!(
+                recall(&c, &filters(|f| f.query = Some("crane".into())))
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert!(recall(&c, &filters(|f| f.query = Some("places".into())))
+                .unwrap()
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn fts_forget_and_clear_drop_index() {
+        let (_d, mut c) = temp_conn();
+        upsert(&mut c, &sample(), false).unwrap();
+        forget(&c, "abc123").unwrap();
+        assert_eq!(fts_count(&c), 0);
+        upsert(&mut c, &sample(), false).unwrap();
+        clear_all(&c).unwrap();
+        assert_eq!(fts_count(&c), 0);
+    }
+
+    #[test]
+    fn fts_backfill_on_connect() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("media.db");
+        {
+            let mut c = connect(&path, 5000).unwrap();
+            upsert(&mut c, &sample(), false).unwrap();
+            // Simulate a DB that predates the FTS index.
+            c.execute("DELETE FROM media_fts", []).unwrap();
+        }
+        let c = connect(&path, 5000).unwrap();
+        assert_eq!(fts_count(&c), 1);
+        // Keywords are rebuilt from the keywords table, not lost.
+        let rows = recall(&c, &filters(|f| f.query = Some("worker".into()))).unwrap();
+        assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    fn fts_explicit_order_by_beats_rank() {
+        let (_d, mut c) = temp_conn();
+        let mut a = sample();
+        a.summary = "steel steel steel everywhere".into();
+        upsert(&mut c, &a, false).unwrap();
+        let mut b = sample();
+        b.content_sha256 = "def456".into();
+        b.summary = "one mention of steel only but much longer text here".into();
+        upsert(&mut c, &b, false).unwrap();
+        c.execute(
+            "UPDATE media SET updated_at='2099-01-01T00:00:00+00:00'
+             WHERE content_sha256='def456'",
+            [],
+        )
+        .unwrap();
+        // bm25 rank puts the steel-heavy row first…
+        let ranked = recall(&c, &filters(|f| f.query = Some("steel".into()))).unwrap();
+        assert_eq!(ranked[0]["content_sha256"], "abc123");
+        // …but an explicit --order-by wins over rank.
+        let by_time = recall(
+            &c,
+            &filters(|f| {
+                f.query = Some("steel".into());
+                f.order_by = Some("updated_at".into());
+            }),
+        )
+        .unwrap();
+        assert_eq!(by_time[0]["content_sha256"], "def456");
     }
 }
