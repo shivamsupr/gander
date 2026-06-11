@@ -104,6 +104,35 @@ Video CHUNKED runs are slow (one backend call per chunk plus a synthesis call), 
 
 Run `just` with no arguments to list every dev recipe.
 
+## For agent harnesses
+
+`gander` is built to be shelled out to. The contract an integrator codes against:
+
+- **Always pass `--output-format json`.** stdout is then a single envelope object
+  with [every key always present](#output-envelope---output-formatjson); the picker
+  and all diagnostics go to **stderr**, so stdout stays pure JSON.
+- **Branch on the exit code, then `status`** — never on stdout prose. `0` ok/partial,
+  `2` usage, `3` input (`failed`), `4` backend/auth, `1` unexpected; **`partial` is `0`**,
+  so read the JSON `status`/`warnings` to tell them apart. See [Exit codes](#exit-codes).
+- **Non-interactive by construction.** With no TTY, gander never prompts and never
+  writes `config.toml`; pass `--backend`/`--model` (or `GANDER_*` env) to pin behavior.
+- **Free to re-run.** Same file ⇒ instant `$0` cache hit (keyed by content hash);
+  `--force` recomputes. Untrusted paths ⇒ constrain with `--allowed-root`.
+
+Command surface:
+
+```sh
+gander SOURCE --output-format json        # describe one local file → envelope
+gander recall --query Q --output-format json   # full-text search the cache (no model call)
+gander recall --output-format json        # browse/filter prior results (no model call)
+gander cache clear [SOURCE]               # forget all assets, or just one file
+gander --check                            # which backends + ffmpeg are reachable
+```
+
+`recall` and `cache` never call a backend — they read the local SQLite cache, so they
+cost nothing and return instantly. See [Recall](#recall) for the full filter set and
+[`--query`](#recall) for FTS5 search syntax.
+
 ## Usage
 
 ```sh
