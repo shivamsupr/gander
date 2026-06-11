@@ -97,7 +97,8 @@ pub fn connect(db_path: &Path, busy_timeout_ms: i64) -> rusqlite::Result<Connect
 }
 
 /// Bring `media_fts` in line with `media` (backfill for DBs that predate the FTS
-/// index, self-heal for any drift). Steady state: two count(*) scans, no writes.
+/// index, self-heal for row-count drift — content drift is kept in sync by
+/// `upsert` directly). Steady state: two count(*) scans, no writes.
 fn sync_fts(conn: &Connection) -> rusqlite::Result<()> {
     let in_sync: bool = conn.query_row(
         "SELECT (SELECT count(*) FROM media) = (SELECT count(*) FROM media_fts)",
@@ -588,7 +589,7 @@ fn run_recall(
     // (ASC = best match first, so --asc/--desc deliberately does not apply).
     let order_sql = match f.order_by.as_deref().filter(|o| allowed.contains(o)) {
         Some(ob) => format!("m.{ob} {direction}"),
-        None if query.is_some() => "bm25(media_fts)".to_string(),
+        None if query.is_some() => "bm25(media_fts), m.content_sha256".to_string(),
         None => format!("m.updated_at {direction}"),
     };
     let limit = f.limit.clamp(1, 500);
