@@ -291,6 +291,7 @@ fn cmd_recall(args: cli::RecallArgs) -> ExitCode {
     let filters = db::RecallFilters {
         keyword: args.keyword,
         text: args.text,
+        query: args.query,
         rating: args.rating.map(|r| rating_str(r).to_string()),
         language: args.language,
         media_kind: args.kind.map(|k| media_kind_str(k).to_string()),
@@ -301,7 +302,7 @@ fn cmd_recall(args: cli::RecallArgs) -> ExitCode {
         chunked: if args.chunked { Some(true) } else { None },
         include_failed: args.include_failed,
         all_versions: args.all_versions,
-        order_by: args.order_by.as_str().to_string(),
+        order_by: args.order_by.map(|o| o.as_str().to_string()),
         descending: !args.asc,
         limit: args.limit,
     };
@@ -399,6 +400,12 @@ fn render_recall_table(rows: &[serde_json::Value]) -> String {
         out.push(format!(
             "{sha:<8}… {kind:<6} {ppl:<6}  {lang:<4}  {rating:<6}  {summary}"
         ));
+        if let Some(p) = g("source_path").as_str().filter(|p| !p.is_empty()) {
+            out.push(format!("           {p}"));
+        }
+        if let Some(s) = g("match_context").as_str().filter(|s| !s.is_empty()) {
+            out.push(format!("           > {s}"));
+        }
     }
     out.join("\n")
 }
@@ -633,4 +640,35 @@ fn render_raw(r: &MediaResult) -> String {
         r.backend.attempts.len()
     ));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_recall_table_continuation_lines() {
+        let with_extras = serde_json::json!([{
+            "content_sha256": "abc123def456",
+            "media_kind": "video",
+            "people_count": 1,
+            "language": "es",
+            "rating": "keep",
+            "summary": "A worker places a steel beam.",
+            "source_path": "/x/clip_es.mp4",
+            "match_context": "…places a **steel** **beam**…",
+        }]);
+        let out = render_recall_table(with_extras.as_array().unwrap());
+        assert!(out.contains("           /x/clip_es.mp4"));
+        assert!(out.contains("           > …places a **steel** **beam**…"));
+
+        let bare = serde_json::json!([{
+            "content_sha256": "abc123def456",
+            "media_kind": "video",
+            "summary": "A worker places a steel beam.",
+        }]);
+        let out = render_recall_table(bare.as_array().unwrap());
+        assert!(!out.contains("/x/clip_es.mp4"));
+        assert!(!out.contains("> "));
+    }
 }

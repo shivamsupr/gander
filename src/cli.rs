@@ -257,8 +257,14 @@ pub struct DescribeArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct RecallArgs {
+    /// Full-text search (FTS5/BM25) over summary, description, transcript,
+    /// translation, keywords and filename. Best-match order unless --order-by
+    /// is given. FTS5 syntax (OR, NEAR, col:, term*) passes through.
+    #[arg(long)]
+    pub query: Option<String>,
     #[arg(long)]
     pub keyword: Option<String>,
+    /// Exact substring match over description/summary/transcript.
     #[arg(long)]
     pub text: Option<String>,
     #[arg(long, value_enum)]
@@ -293,8 +299,9 @@ pub struct RecallArgs {
     #[arg(long)]
     pub all_versions: bool,
 
-    #[arg(long, value_enum, default_value_t = OrderBy::UpdatedAt)]
-    pub order_by: OrderBy,
+    /// Sort column (default: updated_at, or best match with --query).
+    #[arg(long, value_enum)]
+    pub order_by: Option<OrderBy>,
     /// Ascending order (default: descending).
     #[arg(long)]
     pub asc: bool,
