@@ -410,6 +410,16 @@ fn render_recall_table(rows: &[serde_json::Value]) -> String {
     out.join("\n")
 }
 
+/// Clip a probe detail to one line so the check table stays scannable.
+fn truncate(s: &str, max: usize) -> String {
+    let one_line = s.replace('\n', " ");
+    if one_line.chars().count() <= max {
+        return one_line;
+    }
+    let head: String = one_line.chars().take(max.saturating_sub(1)).collect();
+    format!("{head}…")
+}
+
 fn render_check(report: &serde_json::Value) -> String {
     let mut out = Vec::new();
     let obj = match report.as_object() {
@@ -425,7 +435,20 @@ fn render_check(report: &serde_json::Value) -> String {
             };
             let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("");
             let lat = v.get("latency_s").and_then(|l| l.as_f64()).unwrap_or(0.0);
-            out.push(format!("{name:<7} {icon:<7} {model:<26} {lat}s"));
+            // A failure without its class reads as a dead login no matter what it
+            // was; `timeout` and `auth` demand completely different responses.
+            let why = if v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+                String::new()
+            } else {
+                let cls = v.get("error_class").and_then(|c| c.as_str()).unwrap_or("");
+                let detail = v.get("detail").and_then(|d| d.as_str()).unwrap_or("");
+                match (cls.is_empty(), detail.is_empty()) {
+                    (true, _) => String::new(),
+                    (false, true) => format!("  {cls}"),
+                    (false, false) => format!("  {cls}: {}", truncate(detail, 60)),
+                }
+            };
+            out.push(format!("{name:<7} {icon:<7} {model:<26} {lat}s{why}"));
         }
     }
     for name in ["ffprobe", "ffmpeg"] {

@@ -43,7 +43,12 @@ pub const PRINT_TIMEOUT_S: f64 = 300.0;
 pub const CLAUDE_TIMEOUT_S: f64 = 180.0;
 pub const LADDER_DEADLINE_S: f64 = 700.0;
 pub const SYNTH_TIMEOUT_S: f64 = 120.0;
-pub const CHECK_TIMEOUT_S: f64 = 45.0;
+// The probe sends the FULL report contract, so it costs what a real analysis
+// costs: agy/flash needs ~40s and agy/pro was measured at 51.8s. At the old 45s
+// agy could never pass --check while being perfectly healthy, and the failure
+// rendered as `down` — indistinguishable from a dead login. Keep this above the
+// slowest real backend, not merely above the fastest.
+pub const CHECK_TIMEOUT_S: f64 = 120.0;
 
 pub const DB_BUSY_TIMEOUT_MS: i64 = 5000;
 pub const MODEL_DEFAULT: &str = "pro";
