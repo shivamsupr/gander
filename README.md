@@ -1,147 +1,138 @@
 # gander
 
-`gander` is a one-shot CLI that takes a **local media file** (image / video / audio)
-and returns a **transcript** (when speech is present) plus a **structured
-description**, by driving an **agentic CLI backend** (`agy` / `claude` / `codex`)
-under the hood. It persists every result in SQLite keyed by content hash and prints a
-single **JSON envelope** to stdout.
+`gander` looks at one local media file and tells you what is in it.
 
-It runs no model itself: no weights, no API keys, no local inference, no networking of
-its own. `ffmpeg`/`ffprobe` handle probing/segmentation/extraction;
-`agy`/`claude`/`codex`/`ffmpeg`/`ffprobe` are external binaries discovered at runtime.
+Give it an image, a video, or an audio file. You get back a **transcript**, if there is
+speech, and a **structured description**.
 
-- **Consumers:** any agent harness that can run a shell command shells out to `gander`
-  and reads the JSON. No service, no socket, no daemon.
-- **Backends:** `agy` (full vision+audio+video, PTY), `claude` (vision-only floor),
-  `codex` (`codex exec --yolo`, agy-class). Pluggable via one adapter trait.
+It runs no model itself: no weights, no API keys, no network calls of its own. It drives
+an agentic CLI that you already have and are logged into: `agy`, `claude`, or `codex`.
+`ffmpeg` and `ffprobe` do the media work.
 
-## Why "gander"?
+Every result is cached in local SQLite, keyed by content hash. Ask about the same file
+again and the answer is instant and free.
 
-To **take a gander** is to take a look — and that is the whole job: hand it a file, it
-takes a gander and tells you what it sees.
+- **Who calls it:** any agent harness that can run a shell command. No service, no
+  socket, no daemon.
+- **Backends:** `agy` (image, audio, video; needs a PTY), `claude` (image only),
+  `codex` (`codex exec --yolo`, same range as agy). One adapter trait, so you can add more.
+
+## Why the name?
+
+"To take a gander" means "to take a look". That is the whole job.
 
 ## Build
 
 ```sh
-just release        # → target/release/gander  (single ~6 MB binary)
-just test           # 54 deterministic tests, no live backends
+just release        # → target/release/gander  (one binary, about 6 MB)
+just test           # 63 tests, no live backends
 ```
 
-See [Install](#install) to put `gander` on your `PATH`.
-
-The binary statically bundles SQLite (`rusqlite` `bundled`), so there is no libsqlite
-runtime dependency. A fully static musl build for Linux release artifacts is best done
-on Linux CI or via [`cross`](https://github.com/cross-rs/cross) (`just musl`).
+SQLite is built into the binary (`rusqlite` `bundled`), so you need no libsqlite at
+runtime. For a static Linux (musl) build, use Linux CI or
+[`cross`](https://github.com/cross-rs/cross) (`just musl`).
 
 ## Dependencies
 
-**To build** — the Rust toolchain (and [`just`](https://github.com/casey/just) for the
-dev recipes, optional):
+**To build:** the Rust toolchain. [`just`](https://github.com/casey/just) is optional,
+and only used for the dev recipes.
 
 ```sh
-# Rust (https://rustup.rs)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# just (optional, for `just <recipe>`)
-brew install just          # macOS
-cargo install just         # any platform
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # Rust
+brew install just        # or: cargo install just  (optional)
 ```
 
-**To run** — these external binaries on `PATH` (or pointed to via `GANDER_*_BIN` env
-vars):
+**To run:** these binaries, on your `PATH` or named by the `GANDER_*_BIN` env vars.
 
 | Binary | Purpose | Install |
 |---|---|---|
-| `ffmpeg`, `ffprobe` | probe / segment / frame + audio extraction | `brew install ffmpeg` · `apt install ffmpeg` |
-| `agy` and/or `claude` and/or `codex` | the analysis backend(s) — **at least one** | each is its own CLI, installed + logged in separately |
+| `ffmpeg`, `ffprobe` | probe, segment, pull frames + audio | `brew install ffmpeg` · `apt install ffmpeg` |
+| `agy` and/or `claude` and/or `codex` | the analysis backend. You need **at least one** | each is its own CLI. Install and log in separately |
 
-`gander` shells out to whichever backend you select; **each backend handles its own
-login through its own CLI — gander never sees credentials.** Everything else (SQLite) is
-statically bundled into the binary, so there is nothing else to install at runtime.
+Each backend logs in through its own CLI. **gander never sees your credentials.**
 
 ## Install
 
-Build the binary and copy it onto your `PATH` (macOS and Linux):
+Build it, then copy it onto your `PATH`. macOS and Linux:
 
 ```sh
 just release
-
-# user-local (no sudo) — ensure ~/.local/bin is on your PATH:
-install -m 755 target/release/gander ~/.local/bin/gander
-
-# or system-wide (sudo, on PATH everywhere by default):
-sudo install -m 755 target/release/gander /usr/local/bin/gander
-
-gander --version        # verify it's on PATH
+install -m 755 target/release/gander ~/.local/bin/gander        # just for you
+sudo install -m 755 target/release/gander /usr/local/bin/gander # or for everyone
+gander --version
 ```
 
-`sudo` is only needed for the system-wide path because `/usr/local/bin` is root-owned;
-the user-local option needs none.
+You only need `sudo` for the second one, because root owns `/usr/local/bin`.
 
 ## Quickstart
 
 ```sh
-gander --check                            # verify which backends are reachable
-gander photo.jpg                          # describe → human-readable text
+gander --check                            # see which backends answer
+gander photo.jpg                          # describe → text for people
 gander clip.mp4 --output-format json      # describe → JSON envelope
-gander recall                             # browse what you've already analyzed
+gander recall                             # browse what you already analysed
 ```
-
-Re-running on the same file is an instant `$0` cache hit. See [Usage](#usage) for all
-flags.
 
 ## Testing
 
 ```sh
-just test           # ~54 deterministic tests, ~1s (no backends); CI gates on this
-just test-live      # optional live smoke against a real agy backend
+just test           # 63 tests, about 1 second, no backends. CI gates on this.
+just test-live      # optional. Makes one real agy call.
 ```
 
-Notes: `gander --check` may report agy as *down* — a probe artifact, since the no-media
-health prompt does not elicit agy's sentinel block; agy works fine in real describe runs.
-Video CHUNKED runs are slow (one backend call per chunk plus a synthesis call), so a
->60s clip can take a few minutes.
+`gander --check` costs more than it looks:
+
+- It makes one real backend call each, with the full report prompt. It allows 120
+  seconds per backend (`CHECK_TIMEOUT_S`). agy takes 25 to 45 seconds, so a full check
+  takes about a minute.
+- It always probes a **fixed model**: agy→flash, claude→sonnet, codex→gpt-5.5. A green
+  `agy` row does not prove that your configured `pro` model works.
+- A failed row prints the reason after the latency: `auth`, `timeout`, `empty`, or
+  `fatal`. `timeout` means the probe ran out of time. It does not mean a broken login.
+
+Long videos are slow. A CHUNKED run makes one call per chunk, plus one merge call, so a
+clip over 60 seconds can take a few minutes.
 
 Run `just` with no arguments to list every dev recipe.
 
 ## For agent harnesses
 
-`gander` is built to be shelled out to. The contract an integrator codes against:
+`gander` is made to be called from a script. This is the contract:
 
-- **Always pass `--output-format json`.** stdout is then a single envelope object
-  with [every key always present](#output-envelope---output-formatjson); the picker
-  and all diagnostics go to **stderr**, so stdout stays pure JSON.
-- **Branch on the exit code, then `status`** — never on stdout prose. `0` ok/partial,
-  `2` usage, `3` input (`failed`), `4` backend/auth, `1` unexpected; **`partial` is `0`**,
-  so read the JSON `status`/`warnings` to tell them apart. See [Exit codes](#exit-codes).
-- **Non-interactive by construction.** With no TTY, gander never prompts and never
-  writes `config.toml`; pass `--backend`/`--model` (or `GANDER_*` env) to pin behavior.
-- **Free to re-run.** Same file ⇒ instant `$0` cache hit (keyed by content hash);
-  `--force` recomputes. Untrusted paths ⇒ constrain with `--allowed-root`.
-
-Command surface:
+- **Always pass `--output-format json`.** stdout is then one JSON object, and
+  [every key is always there](#output-envelope---output-formatjson). The picker and all
+  messages go to **stderr**, so stdout stays clean JSON.
+- **Read the exit code first, then `status`.** Never read the prose on stdout. Careful:
+  **`partial` also exits `0`**, so check `status` and `warnings` to tell it from `ok`.
+  See [Exit codes](#exit-codes).
+- **It never stops to ask you anything.** With no TTY, gander does not prompt and does
+  not write `config.toml`. Pin it with `--backend` and `--model`, or the `GANDER_*` env vars.
+- **Running it again is free.** The same file is an instant cache hit. Use `--force` to
+  compute it again, and `--allowed-root` for paths you do not trust.
+- **`--check` is not free, and is not a config test.** See [Testing](#testing). For one
+  machine-readable probe, run `gander --check --backend agy --output-format json` and
+  read `error_class`.
 
 ```sh
-gander SOURCE --output-format json        # describe one local file → envelope
-gander recall --query Q --output-format json   # full-text search the cache (no model call)
-gander recall --output-format json        # browse/filter prior results (no model call)
-gander cache clear [SOURCE]               # forget all assets, or just one file
-gander --check                            # which backends + ffmpeg are reachable
+gander SOURCE --output-format json             # describe one local file → envelope
+gander recall --query Q --output-format json   # full-text search the cache
+gander recall --output-format json             # browse or filter past results
+gander cache clear [SOURCE]                    # forget everything, or one file
+gander --check                                 # which backends and ffmpeg answer
 ```
 
-`recall` and `cache` never call a backend — they read the local SQLite cache, so they
-cost nothing and return instantly. See [Recall](#recall) for the full filter set and
-[`--query`](#recall) for FTS5 search syntax.
+`recall` and `cache` never call a backend. They read the local cache, so they are free
+and instant.
 
 ## Usage
 
 ```sh
 gander SOURCE [options]                 # describe one local file
-gander recall [filters]                 # read-only cache browse (no model call)
-gander config {path,show,clear}         # inspect / reset persisted defaults
+gander recall [filters]                 # read the cache (no model call)
+gander config {path,show,clear}         # look at or reset saved defaults
 gander cache path                       # print the cache DB path
-gander cache clear [SOURCE]             # forget all assets, or just one file
-gander --check                          # health-probe the backends + ffmpeg
+gander cache clear [SOURCE]             # forget everything, or one file
+gander --check                          # check the backends and ffmpeg
 gander --version
 ```
 
@@ -149,45 +140,50 @@ gander --version
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `SOURCE` | — | local path to one image / video / audio file (no URLs) |
-| `--output-format {raw,json}` | `raw` | `json` emits the canonical envelope |
+| `SOURCE` | — | path to one local image, video, or audio file. No URLs |
+| `--output-format {raw,json}` | `raw` | `json` prints the envelope |
 | `--model {pro,flash,sonnet,haiku,opus,gpt-5.5,gpt-5.4,gpt-5.4-mini}` | `pro` | primary model |
 | `--backend {agy,claude,codex}` | `agy` | primary backend |
-| `--fallback-model {…,none}` | `flash` | model for the fallback attempt (same set + `none`) |
-| `--fallback-backend {…,none}` | `agy` | backend for the fallback attempt |
-| `--no-transcript` | off | skip speech transcription |
+| `--fallback-model {…,none}` | `flash` | model for the second try (same list, plus `none`) |
+| `--fallback-backend {…,none}` | `agy` | backend for the second try |
+| `--no-transcript` | off | do not transcribe speech |
 | `--no-translate` | off | no English translation block |
-| `--max-frames N` | `12` | evenly-spaced frames per clip/chunk (clamped `[1,64]`) |
-| `--fps RATE` | — | fixed-rate frame sampling, capped by `--max-frames` |
-| `--chunk-length S` | `60` | segment length for the chunked tier |
-| `--max-chunks N` | `8` | cap on chunks; over-limit ⇒ widen segment length |
-| `--max-duration S` | unset | hard-reject videos longer than S |
-| `--force` | off | ignore any cached row and recompute |
-| `--keep-temp` | off | keep the per-call temp workdir (path on stderr) |
-| `--allowed-root DIR` | — | restrict SOURCE to paths under DIR |
-| `--db PATH` | `~/.gander/media.db` | override the cache DB location |
-| `--timeout S` | `300` | per-backend wall-clock seconds |
-| `--reconfigure` | — | re-run the interactive first-run setup |
-| `--no-config` | off | ignore the persisted config file for this run |
-| `--check` | — | health-probe the backends + ffmpeg (ignores SOURCE) |
-| `-V`, `--version` | — | print version and exit |
+| `--max-frames N` | `12` | frames per clip or chunk, evenly spaced (kept within `[1,64]`) |
+| `--fps RATE` | — | sample frames at a fixed rate, capped by `--max-frames` |
+| `--chunk-length S` | `60` | length of each segment in the chunked tier |
+| `--max-chunks N` | `8` | limit on chunks. Over the limit, segments get longer |
+| `--max-duration S` | unset | reject videos longer than S |
+| `--force` | off | ignore the cache and compute again |
+| `--keep-temp` | off | keep the temp working folder (path goes to stderr) |
+| `--allowed-root DIR` | — | only allow a SOURCE inside DIR |
+| `--db PATH` | `~/.gander/media.db` | use a different cache DB |
+| `--timeout S` | `300` | wall-clock seconds per backend |
+| `--reconfigure` | — | run the first-run setup again. **It rewrites `config.toml` from scratch, so any comments in it are lost** |
+| `--no-config` | off | ignore the config file for this run |
+| `--check` | — | check the backends and ffmpeg. SOURCE is ignored |
+| `-V`, `--version` | — | print the version and exit |
 | `-h`, `--help` | — | print help |
 
-### Primary → fallback
+### Primary and fallback
 
-Two attempts, each an explicit `(backend, model)` pair. The primary runs first; on
-capacity(429)/timeout/transient/empty/unparseable it **demotes** to the fallback; an
-**auth** signal **aborts** immediately (no fallback). `--fallback-model none` (or
-`--fallback-backend none`) disables the second attempt. A backend/model mismatch
-(e.g. `--backend agy --model sonnet`) is a usage error (exit `2`).
+gander tries twice. Each try is one `(backend, model)` pair.
 
-### Video tiers (chosen automatically from duration)
+The primary runs first. If it returns capacity (429), a timeout, a temporary error, or
+an answer that is empty or unreadable, gander drops to the fallback.
+
+**An auth error is different: it stops everything at once, with no fallback.** A broken
+login means analysis is dead, not slower.
+
+`--fallback-model none` or `--fallback-backend none` switches the second try off. A pair
+that does not go together, such as `--backend agy --model sonnet`, is a usage error (`2`).
+
+### Video tiers (picked automatically from the duration)
 
 | Duration | Tier | What runs |
 |---|---|---|
-| `< 30s` | DIRECT | whole file to the backend |
-| `30–60s` | SINGLE-BATCH | ffmpeg frames+audio → one backend call |
-| `> 60s` | CHUNKED | stream-copy segments → per-chunk call → deterministic merge + one Flash prose-synthesis call |
+| `< 30s` | DIRECT | the whole file goes to the backend |
+| `30–60s` | SINGLE-BATCH | ffmpeg pulls frames and audio → one backend call |
+| `> 60s` | CHUNKED | stream-copy segments → one call per chunk → a fixed merge, then one Flash call for the prose |
 
 ### Recall
 
@@ -200,29 +196,31 @@ gander recall [--query Q] [--keyword K] [--text T] [--rating {keep,review,cull}]
               [--asc] [--limit N] [--db PATH] [--output-format {raw,json}]
 ```
 
-### Config & cache subcommands
+`--query` is full-text search (SQLite FTS5, ranked by BM25, porter-stemmed) over the
+summary, description, transcript, English translation, keywords, and filename. The best
+match comes first, unless you pass `--order-by`. Each row shows the asset's
+`source_path` and a `match_context` snippet, so you can see why it matched.
 
-```
-gander config path | show | clear        # ~/.gander/config.toml
-gander cache  path                       # print the cache DB path
-gander cache  clear [SOURCE] [--db PATH] # forget all assets, or just one file
-```
-
-`--query` is full-text search (SQLite FTS5, BM25-ranked, porter-stemmed) over
-summary, description, transcript, English translation, keywords, and filename.
-Results come back best-match first (unless `--order-by` is given), each with the
-asset's `source_path` and a `match_context` snippet showing why it matched.
-FTS5 query syntax passes through (`steel OR crane`, `transcript:prueba`, `weld*`);
-strings that fail to parse as FTS5 are retried as plain quoted terms.
+FTS5 syntax works as-is (`steel OR crane`, `transcript:prueba`, `weld*`). A string that
+is not valid FTS5 is retried as plain quoted words.
 
 ```sh
 gander recall --query "steel beam"        # ranked full-text search
 gander recall --query worker --kind video --rating keep
 ```
 
+### Config and cache subcommands
+
+```
+gander config path | show | clear        # ~/.gander/config.toml
+gander cache  path                       # print the cache DB path
+gander cache  clear [SOURCE] [--db PATH] # forget everything, or one file
+```
+
 ## Output envelope (`--output-format=json`)
 
-One object; **every key always present** (`null`/`""`/`0`/`[]` for N/A):
+One object. **Every key is always there.** Anything that does not apply is `null`, `""`,
+`0`, or `[]`.
 
 ```jsonc
 {
@@ -240,20 +238,30 @@ One object; **every key always present** (`null`/`""`/`0`/`[]` for N/A):
 
 ## Exit codes
 
-`0` ok/partial · `2` usage error · `3` input error (`failed`) · `4` backend/auth
-failure · `1` unexpected. **`partial` exits `0`** — read the JSON `status`/`warnings`.
+| Code | Meaning |
+|---|---|
+| `0` | ok, or partial |
+| `1` | unexpected |
+| `2` | usage error |
+| `3` | input error (`failed`) |
+| `4` | backend or auth failure |
+
+**`partial` also exits `0`.** Read `status` and `warnings` to tell it from `ok`.
 
 ## Configuration
 
-Per-setting precedence: **flag > `GANDER_*` env > `~/.gander/config.toml` > built-in.**
+For each setting, this order wins:
+**flag > `GANDER_*` env > `~/.gander/config.toml` > built-in default.**
 
-On the first interactive run (a real TTY), gander shows an **arrow-key picker** (↑/↓,
-Enter) for the primary and fallback defaults — **backend first, then a model scoped to
-that backend** (so the pair is always valid) — and saves them to
-`~/.gander/config.toml`. A fallback backend of `none` skips the fallback model question.
-The picker renders to stderr, so it never pollutes the stdout envelope. A non-interactive
-run (the agent path) never prompts and never writes. `--reconfigure` re-runs the picker;
-`--no-config` ignores the file for one run.
+The first time you run gander in a real terminal, an arrow-key picker (↑/↓, then Enter)
+asks for your primary and fallback defaults. It asks for the backend first, then for a
+model that belongs to it, so the pair is always valid. A fallback backend of `none`
+skips the model question. Answers go to `~/.gander/config.toml`. The picker draws on
+stderr, so it never touches the JSON on stdout. A run with no terminal never asks and
+never writes.
+
+`--reconfigure` runs the picker again. **It rewrites `config.toml` from scratch, so any
+comments you put in that file are lost.** `--no-config` ignores the file for one run.
 
 Env vars: `GANDER_DB_PATH`, `GANDER_AGY_BIN` / `GANDER_CLAUDE_BIN` / `GANDER_CODEX_BIN`,
 `GANDER_FFPROBE_BIN` / `GANDER_FFMPEG_BIN`, `GANDER_ALLOWED_ROOT`,
@@ -264,12 +272,17 @@ Env vars: `GANDER_DB_PATH`, `GANDER_AGY_BIN` / `GANDER_CLAUDE_BIN` / `GANDER_COD
 
 ## Security
 
-`SOURCE` is treated as untrusted: symlinks/`..` are resolved first; URLs, NUL bytes,
-non-regular files, and paths outside `--allowed-root` are rejected. Backend args are
-passed as argv vectors (no shell). Frames and standalone images are EXIF/GPS-stripped
-(`-map_metadata -1`). The source file is never mutated. The cache DB is `0600`.
+gander does not trust `SOURCE`:
 
-> **Footgun:** the backends run with `--dangerously-skip-permissions` (agy),
-> `bypassPermissions` (claude), and `--yolo` = `danger-full-access` (codex). These are
-> on by design so the one-shot call is non-interactive — use `--allowed-root` and run
-> against trusted inputs.
+- symlinks and `..` are resolved first
+- URLs, NUL bytes, and files that are not regular files are rejected
+- paths outside `--allowed-root` are rejected
+- backend arguments are passed as an argv vector, never through a shell
+- frames and standalone images have EXIF and GPS stripped (`-map_metadata -1`)
+- your source file is never changed
+- the cache DB is `0600`
+
+> **Warning:** the backends run with their permission checks off:
+> `--dangerously-skip-permissions` (agy), `bypassPermissions` (claude), and `--yolo`,
+> which means `danger-full-access` (codex). This is on purpose, so one call needs no
+> interaction. Use `--allowed-root`, and only run against files you trust.

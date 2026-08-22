@@ -13,9 +13,16 @@ build:
 release:
     cargo build --release
 
-# Install the `gander` binary to ~/.cargo/bin (must be on PATH).
-install:
-    cargo install --path . --locked
+# Install the `gander` binary to ~/.local/bin (must be on PATH), as the README says.
+# NOT `cargo install`: that targets ~/.cargo/bin, which sits earlier on most PATHs
+# and would silently shadow a binary installed the documented way.
+# The rm is required on macOS: overwriting a signed binary in place breaks its
+# signature and the kernel then SIGKILLs it.
+install: release
+    rm -f ~/.local/bin/gander
+    install -m 755 target/release/gander ~/.local/bin/gander
+    @[ "$(uname)" = "Darwin" ] && codesign --force --sign - ~/.local/bin/gander || true
+    @gander --version
 
 # Run gander with arbitrary args (debug build).
 #   just run image.png --output-format json
