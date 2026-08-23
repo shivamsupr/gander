@@ -1,0 +1,19 @@
+# cross's released images (tag 0.2.5, from 2023) are Ubuntu 18.04 with glibc 2.27.
+# GitHub's ubuntu-latest runner is glibc 2.35, so any host artifact that reaches the
+# container -- a build script or proc-macro restored from a cache, for example --
+# cannot execute inside it:
+#
+#   build-script-build: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.28' not found
+#
+# Measured 2026-08-23 by running `ldd --version` in each image:
+#   :0.2.5  GLIBC 2.27  (Ubuntu 18.04.6 LTS)
+#   :edge   GLIBC 2.39  (Ubuntu 24.04.4 LTS)
+#
+# `edge` is a rolling tag built from cross's default branch. If a future image ever
+# regresses, pin a specific digest here rather than reverting to 0.2.5.
+
+[target.x86_64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl:edge"
+
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:edge"

@@ -19,7 +19,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --bin gander   # 52 deterministic tests; live backends are #[ignore]
+      - run: cargo test --bin gander   # 63 deterministic tests; live backends are #[ignore]
 
   musl-static:
     runs-on: ubuntu-latest
@@ -31,7 +31,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      # No Swatinem/rust-cache here, on purpose. cross runs the build inside a
+      # container, so host-built artifacts in target/ are not valid there. When the
+      # cache restored, build scripts compiled against the runner's glibc were
+      # executed in the container and died with `GLIBC_2.28 not found`; when it
+      # missed, everything rebuilt in-container and passed. That made CI flaky on
+      # cache state alone. See Cross.toml for the image side of the same problem.
       # `cross` provides the musl C cross-toolchain that rusqlite's bundled SQLite
       # and portable-pty need to link a fully static binary.
       - run: cargo install cross --locked
