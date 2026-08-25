@@ -235,6 +235,9 @@ fn row_to_result(row: &Row) -> rusqlite::Result<MediaResult> {
         attempts: vec![],
     };
 
+    // Only single-file results are ever cached, so a hit has exactly one source.
+    let source_path: Option<String> = row.get("source_path")?;
+
     Ok(MediaResult {
         status: Status::from_str(&status_s),
         content_sha256: row.get("content_sha256")?,
@@ -254,7 +257,8 @@ fn row_to_result(row: &Row) -> rusqlite::Result<MediaResult> {
         structured: Some(structured),
         media,
         backend,
-        source_path: row.get("source_path")?,
+        sources: source_path.iter().cloned().collect(),
+        source_path,
         schema_version: row.get("schema_version")?,
         tool_version: TOOL_VERSION.to_string(),
     })
@@ -702,6 +706,7 @@ mod tests {
                 }],
             },
             source_path: Some("/x/clip_es.mp4".into()),
+            sources: vec!["/x/clip_es.mp4".into()],
             schema_version: SCHEMA_VERSION.into(),
             tool_version: TOOL_VERSION.into(),
         }

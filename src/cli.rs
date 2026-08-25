@@ -171,8 +171,11 @@ pub enum ConfigAction {
 
 #[derive(Debug, clap::Args)]
 pub struct DescribeArgs {
-    /// Local path to one image / video / audio file (no URLs).
-    pub source: Option<String>,
+    /// Local paths to image / video / audio files (no URLs). Give several to
+    /// analyze them together in ONE call — at most 10 images, 2 videos and
+    /// 2 audio files, and the cache is bypassed for a multi-file call.
+    #[arg(value_name = "SOURCE")]
+    pub sources: Vec<String>,
 
     /// `json` emits the canonical envelope to stdout.
     #[arg(long, value_enum, default_value_t = OutputFormat::Raw)]
@@ -183,6 +186,13 @@ pub struct DescribeArgs {
     /// Ignored on chunked video (>60s).
     #[arg(long, value_name = "TEXT")]
     pub ask: Option<String>,
+
+    /// Replace the ENTIRE default prompt with TEXT (only the media location and
+    /// the sentinel wrapper are kept). The raw model reply is returned in
+    /// `description`; no structured report, transcript, or yaml is produced.
+    /// Bypasses the cache (read and write). Not supported on chunked video (>60s).
+    #[arg(long, value_name = "TEXT", conflicts_with = "ask")]
+    pub prompt: Option<String>,
 
     /// Primary model.
     #[arg(long, value_enum)]

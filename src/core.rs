@@ -18,6 +18,7 @@ use crate::envelope::{
     Attempt, BackendInfo, MediaKind, MediaMeta, MediaResult, Status, Structured, Technical,
 };
 use crate::ffmpeg::{self, ProbeInfo, WorkDir};
+use crate::multi;
 use crate::parse::{self, ParsedResult};
 use crate::prompt::{build_prompt, PromptKind};
 use crate::source::{self, SourceError};
@@ -45,6 +46,11 @@ pub struct DescribeOptions {
     /// contain the answer, and an ask-flavored description must not overwrite the
     /// canonical cached one.
     pub ask: Option<String>,
+    /// Full prompt override: replaces the standard contract (only the media
+    /// location preamble and the sentinel wrapper survive). The raw answer is
+    /// returned in `description` with no structured parse. Bypasses the cache
+    /// in both directions for the same reason as `ask`.
+    pub prompt: Option<String>,
 }
 
 /// Resolve the primary + fallback rungs from flags/defaults. Defaults: primary
@@ -100,6 +106,259 @@ fn is_real_transcript(t: Option<&str>) -> bool {
     }
 }
 
+/// Entry point for one OR MANY sources.
+///
+/// One source keeps the full single-file pipeline (cache, per-kind prompt, video
+/// tiers). Two or more are answered by ONE backend call over the whole set, so
+/// questions can compare items; the cache is bypassed both ways, because a set
+/// answer is not the canonical row for any member.
+pub fn describe_many(paths: &[String], opts: &DescribeOptions, cfg: &Config) -> MediaResult {
+    match paths {
+        [] => MediaResult::failed(None, "no source given".into(), "input", String::new(), "unknown"),
+        [one] => describe_media(one, opts, cfg),
+        _ => describe_set(paths, opts, cfg),
+    }
+}
+
+/// The 2+ source path. Every failure here is decided BEFORE any backend call.
+fn describe_set(paths: &[String], opts: &DescribeOptions, cfg: &Config) -> MediaResult {
+    let max_frames = clamp(opts.max_frames.unwrap_or(cfg.max_frames) as i64, 1, 64) as u32;
+    let eff_max_duration = opts.max_duration.or(cfg.max_duration_s);
+    let all: Vec<String> = paths.to_vec();
+
+    // 1) validate + hash + probe + sniff every source. Any bad source fails the
+    // whole call: a partial set would silently answer a different question.
+    let mut items: Vec<multi::MultiItem> = Vec::with_capacity(paths.len());
+    for (i, raw) in paths.iter().enumerate() {
+        let spath = match source::validate_path(raw, cfg.allowed_root.as_deref(), None) {
+            Ok(p) => p,
+            Err(e) => return with_sources(failed_from_source(raw, &e), &all),
+        };
+        let sha = match source::sha256_file(&spath) {
+            Ok(s) => s,
+            Err(e) => {
+                return with_sources(
+                    MediaResult::failed(
+                        Some(spath.display().to_string()),
+                        format!("hash failed: {e}"),
+                        "unreadable",
+                        String::new(),
+                        "unknown",
+                    ),
+                    &all,
+                )
+            }
+        };
+        let probe = ffmpeg::ffprobe(&spath, &cfg.ffprobe_bin);
+        let kind = match source::sniff_kind(&spath, &probe) {
+            Ok(k) => k,
+            Err(e) => return with_sources(failed_from_source(raw, &e), &all),
+        };
+
+        // A video that would normally be chunked cannot ride in a shared call.
+        if kind == MediaKind::Video {
+            if let Some(limit) = eff_max_duration {
+                if probe.duration.unwrap_or(0.0) > limit {
+                    return with_sources(
+                        multi_failed(
+                            &spath,
+                            format!(
+                                "duration {:.1}s exceeds --max-duration {limit:.0}s",
+                                probe.duration.unwrap_or(0.0)
+                            ),
+                            "too_long",
+                        ),
+                        &all,
+                    );
+                }
+            }
+            if video::pick_tier(probe.duration, cfg) == video::VideoTier::Chunked {
+                return with_sources(
+                    multi_failed(
+                        &spath,
+                        format!(
+                            "video longer than {:.0}s cannot be combined with other media: \
+                             it needs chunking, which is one call per chunk",
+                            cfg.batch_max_s
+                        ),
+                        "input",
+                    ),
+                    &all,
+                );
+            }
+        }
+
+        items.push(multi::MultiItem {
+            label: multi::label_for(i),
+            kind,
+            path: spath,
+            sha,
+            probe,
+        });
+    }
+
+    // 2) per-kind caps.
+    if let Err(msg) = multi::check_caps(&items) {
+        return with_sources(
+            MediaResult::failed(
+                items.first().map(|i| i.path.display().to_string()),
+                msg,
+                "input",
+                String::new(),
+                "multi",
+            ),
+            &all,
+        );
+    }
+
+    // 3) set identity: the member hashes, in label order.
+    let set_sha = source::sha256_of_hashes(&items.iter().map(|i| i.sha.clone()).collect::<Vec<_>>());
+
+    let work = match WorkDir::new(opts.keep_temp, cfg.allowed_root.as_deref()) {
+        Ok(w) => w,
+        Err(e) => {
+            return with_sources(
+                MediaResult::failed(
+                    items.first().map(|i| i.path.display().to_string()),
+                    format!("could not create work dir: {e}"),
+                    "input",
+                    set_sha,
+                    "multi",
+                ),
+                &all,
+            )
+        }
+    };
+
+    // 4) one call over the whole set.
+    let mc = multi::build_call(&items, work.path(), cfg, opts, max_frames);
+    let (primary, fallback) = resolve_rungs(opts, cfg);
+    let br = run_ladder(&mc.call, &primary, fallback.as_ref(), cfg, None);
+
+    let mut res = finish_set(&items, &set_sha, br, opts, mc.any_audio, mc.warnings);
+    res.sources = items.iter().map(|i| i.path.display().to_string()).collect();
+    res
+}
+
+/// Assemble the set result. Shares the parse + status rules with `finish()`;
+/// only the media block differs, since no single ffprobe describes a set.
+fn finish_set(
+    items: &[multi::MultiItem],
+    set_sha: &str,
+    br: BackendResult,
+    opts: &DescribeOptions,
+    any_audio: bool,
+    warnings: Vec<String>,
+) -> MediaResult {
+    let first = items[0].path.clone();
+    let backend_info = BackendInfo {
+        model_used: br.model.clone().unwrap_or_default(),
+        backend_used: br.backend.map(String::from).unwrap_or_default(),
+        attempts: br.attempts.iter().map(attempt_view).collect(),
+    };
+    // media{} describes ONE file, so a set only claims what holds for all of it.
+    let media = MediaMeta {
+        has_audio: any_audio,
+        chunk_count: items.len() as u32,
+        ..MediaMeta::default()
+    };
+
+    let mut base = MediaResult {
+        status: Status::Ok,
+        content_sha256: set_sha.to_string(),
+        media_kind: "multi".to_string(),
+        error: None,
+        error_class: None,
+        warnings,
+        parse_ok: false,
+        cached: false,
+        summary: String::new(),
+        description: String::new(),
+        transcript: None,
+        language: None,
+        english_translation: None,
+        structured: Some(Structured::default()),
+        media,
+        backend: backend_info,
+        source_path: Some(first.display().to_string()),
+        sources: Vec::new(),
+        schema_version: crate::envelope::SCHEMA_VERSION.to_string(),
+        tool_version: crate::envelope::TOOL_VERSION.to_string(),
+    };
+
+    if !br.ok {
+        base.status = Status::Failed;
+        base.error = Some(br.error);
+        base.error_class = Some(if br.aborted_auth { "auth" } else { "backend" }.to_string());
+        return base;
+    }
+
+    // --prompt: caller-defined reply shape, so no envelope parse (see finish()).
+    if opts.prompt.is_some() {
+        let answer =
+            parse::extract_answer(&br.answer).unwrap_or_else(|| br.answer.trim().to_string());
+        base.warnings
+            .push("prompt_override: standard report skipped; raw answer in description".into());
+        base.parse_ok = !answer.is_empty();
+        if answer.is_empty() {
+            base.status = Status::Failed;
+            base.error = Some("prompt_override: empty answer".into());
+            base.error_class = Some("backend".into());
+        }
+        base.summary = derive_summary(&answer);
+        base.description = answer;
+        return base;
+    }
+
+    let parsed = parse::parse_response(&br.answer);
+    // decide_status only reads has_audio_stream off the probe, and treats Image
+    // as never speech-capable — which is exactly right for an all-image set.
+    let synthetic = ProbeInfo {
+        has_audio_stream: any_audio,
+        ..ProbeInfo::default()
+    };
+    let kind = if items.iter().all(|i| i.kind == MediaKind::Image) {
+        MediaKind::Image
+    } else {
+        MediaKind::Video
+    };
+    let (status, transcript, language, translation, extra) =
+        decide_status(kind, &synthetic, opts.want_transcript, &parsed, br.vision_only);
+    base.warnings.extend(parsed.warnings.clone());
+    base.warnings.extend(extra);
+
+    if status == Status::Failed {
+        let first_w = base.warnings.first().cloned().unwrap_or_else(|| "unknown".into());
+        base.error = Some(format!("parse_failed: {first_w}"));
+        base.error_class = Some("backend".to_string());
+    }
+    base.status = status;
+    base.parse_ok = parsed.parse_ok;
+    base.summary = derive_summary(&parsed.description);
+    base.description = parsed.description.clone();
+    base.transcript = transcript;
+    base.language = language;
+    base.english_translation = translation;
+    base.structured = Some(structured_from_parsed(&parsed));
+    base
+}
+
+fn multi_failed(spath: &Path, msg: String, class: &str) -> MediaResult {
+    MediaResult::failed(
+        Some(spath.display().to_string()),
+        format!("{}: {msg}", spath.display()),
+        class,
+        String::new(),
+        "multi",
+    )
+}
+
+/// Failures before the call still report every source that was asked for.
+fn with_sources(mut r: MediaResult, all: &[String]) -> MediaResult {
+    r.sources = all.to_vec();
+    r
+}
+
 pub fn describe_media(path: &str, opts: &DescribeOptions, cfg: &Config) -> MediaResult {
     let max_frames = clamp(opts.max_frames.unwrap_or(cfg.max_frames) as i64, 1, 64) as u32;
     let eff_max_duration = opts.max_duration.or(cfg.max_duration_s);
@@ -126,10 +385,11 @@ pub fn describe_media(path: &str, opts: &DescribeOptions, cfg: &Config) -> Media
     };
 
     // 2) cache lookup — return BEFORE probe on a hit (instant $0 read).
-    if !opts.force && opts.ask.is_none() {
+    if !opts.force && opts.ask.is_none() && opts.prompt.is_none() {
         if let Some(c) = &conn {
             if let Some(mut hit) = db::lookup(c, &sha) {
                 hit.source_path = Some(spath.display().to_string());
+                hit.sources = vec![spath.display().to_string()];
                 return hit;
             }
         }
@@ -141,6 +401,26 @@ pub fn describe_media(path: &str, opts: &DescribeOptions, cfg: &Config) -> Media
         Ok(k) => k,
         Err(e) => return failed_from_source(path, &e),
     };
+
+    // 4a) chunked video cannot honor a raw prompt override: the merge synthesis
+    // only sees per-chunk text, and returning the standard report instead would
+    // silently ignore the caller. Hard reject before any backend call.
+    if kind == MediaKind::Video
+        && opts.prompt.is_some()
+        && video::pick_tier(probe.duration, cfg) == video::VideoTier::Chunked
+    {
+        return MediaResult::failed(
+            Some(spath.display().to_string()),
+            format!(
+                "prompt_not_supported: --prompt requires a single backend call; videos longer \
+                 than {:.0}s are chunked",
+                cfg.batch_max_s
+            ),
+            "input",
+            sha,
+            "video",
+        );
+    }
 
     // 4) max-duration hard reject (video only), before any backend call.
     if kind == MediaKind::Video {
@@ -179,7 +459,7 @@ pub fn describe_media(path: &str, opts: &DescribeOptions, cfg: &Config) -> Media
 
     let (br, chunk_count, chunked) = match kind {
         MediaKind::Image => {
-            let call = image_call(&spath, cfg, work.path(), &mut warnings)
+            let call = image_call(&spath, cfg, work.path(), opts, &mut warnings)
                 .with_ask(opts.ask.as_deref());
             (
                 run_ladder(&call, &primary, fallback.as_ref(), cfg, None),
@@ -226,8 +506,9 @@ pub fn describe_media(path: &str, opts: &DescribeOptions, cfg: &Config) -> Media
         chunk_count,
         chunked,
         warnings,
+        opts.prompt.is_some(),
     );
-    if opts.ask.is_none() {
+    if opts.ask.is_none() && opts.prompt.is_none() {
         maybe_write(&mut conn, &mut res, opts.force);
     }
     res
@@ -242,7 +523,13 @@ fn maybe_write(conn: &mut Option<Connection>, res: &mut MediaResult, force: bool
     }
 }
 
-fn image_call(spath: &Path, cfg: &Config, work: &Path, warnings: &mut Vec<String>) -> MediaCall {
+fn image_call(
+    spath: &Path,
+    cfg: &Config,
+    work: &Path,
+    opts: &DescribeOptions,
+    warnings: &mut Vec<String>,
+) -> MediaCall {
     let (img_path, add_dir) = match ffmpeg::sanitize_image(spath, work, &cfg.ffmpeg_bin) {
         Some(sanitized) => (sanitized.display().to_string(), work.display().to_string()),
         None => {
@@ -253,7 +540,11 @@ fn image_call(spath: &Path, cfg: &Config, work: &Path, warnings: &mut Vec<String
             )
         }
     };
-    let prompt = build_prompt(PromptKind::Image, true, true, None).replace("MEDIA_PATH", &img_path);
+    let prompt = match &opts.prompt {
+        Some(p) => crate::prompt::build_override_prompt(PromptKind::Image, p),
+        None => build_prompt(PromptKind::Image, true, true, None),
+    }
+    .replace("MEDIA_PATH", &img_path);
     MediaCall {
         kind: "image",
         add_dir,
@@ -265,16 +556,26 @@ fn image_call(spath: &Path, cfg: &Config, work: &Path, warnings: &mut Vec<String
 
 fn audio_call(spath: &Path, probe: &ProbeInfo, opts: &DescribeOptions) -> MediaCall {
     let path = spath.display().to_string();
-    let full = build_prompt(
-        PromptKind::Audio,
-        opts.want_transcript,
-        opts.translate,
-        None,
-    )
-    .replace("MEDIA_PATH", &path);
-    // claude cannot hear audio → vision-only floor produces empty visual fields.
-    let vision =
-        build_prompt(PromptKind::Audio, false, opts.translate, None).replace("MEDIA_PATH", &path);
+    let (full, vision) = match &opts.prompt {
+        Some(p) => {
+            let o = crate::prompt::build_override_prompt(PromptKind::Audio, p)
+                .replace("MEDIA_PATH", &path);
+            (o.clone(), o)
+        }
+        None => {
+            let full = build_prompt(
+                PromptKind::Audio,
+                opts.want_transcript,
+                opts.translate,
+                None,
+            )
+            .replace("MEDIA_PATH", &path);
+            // claude cannot hear audio → vision-only floor produces empty visual fields.
+            let vision = build_prompt(PromptKind::Audio, false, opts.translate, None)
+                .replace("MEDIA_PATH", &path);
+            (full, vision)
+        }
+    };
     MediaCall {
         kind: "audio",
         add_dir: spath.parent().unwrap_or(spath).display().to_string(),
@@ -298,6 +599,7 @@ fn finish(
     chunk_count: u32,
     chunked: bool,
     warnings: Vec<String>,
+    prompt_override: bool,
 ) -> MediaResult {
     let media = media_meta(kind, probe, spath, chunked, chunk_count);
     let backend_info = BackendInfo {
@@ -326,6 +628,53 @@ fn finish(
             media,
             backend: backend_info,
             source_path: Some(spath.display().to_string()),
+            sources: vec![spath.display().to_string()],
+            schema_version: crate::envelope::SCHEMA_VERSION.to_string(),
+            tool_version: crate::envelope::TOOL_VERSION.to_string(),
+        };
+    }
+
+    // --prompt override: the reply shape is caller-defined, so the envelope
+    // parse and status rules do not apply. Return the sentinel-sliced answer
+    // verbatim as the description.
+    if prompt_override {
+        let answer = parse::extract_answer(&br.answer)
+            .unwrap_or_else(|| br.answer.trim().to_string());
+        let mut all_warnings = warnings;
+        all_warnings
+            .push("prompt_override: standard report skipped; raw answer in description".into());
+        let summary = derive_summary(&answer);
+        return MediaResult {
+            status: if answer.is_empty() {
+                Status::Failed
+            } else {
+                Status::Ok
+            },
+            content_sha256: sha.to_string(),
+            media_kind: kind.as_str().to_string(),
+            error: if answer.is_empty() {
+                Some("prompt_override: empty answer".into())
+            } else {
+                None
+            },
+            error_class: if answer.is_empty() {
+                Some("backend".to_string())
+            } else {
+                None
+            },
+            warnings: all_warnings,
+            parse_ok: !answer.is_empty(),
+            cached: false,
+            summary,
+            description: answer,
+            transcript: None,
+            language: None,
+            english_translation: None,
+            structured: Some(Structured::default()),
+            media,
+            backend: backend_info,
+            source_path: Some(spath.display().to_string()),
+            sources: vec![spath.display().to_string()],
             schema_version: crate::envelope::SCHEMA_VERSION.to_string(),
             tool_version: crate::envelope::TOOL_VERSION.to_string(),
         };
@@ -372,6 +721,7 @@ fn finish(
         media,
         backend: backend_info,
         source_path: Some(spath.display().to_string()),
+        sources: vec![spath.display().to_string()],
         schema_version: crate::envelope::SCHEMA_VERSION.to_string(),
         tool_version: crate::envelope::TOOL_VERSION.to_string(),
     }

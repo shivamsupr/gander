@@ -169,6 +169,97 @@ pub fn append_ask(prompt: String, question: &str) -> String {
     )
 }
 
+/// Location preambles for `--prompt`: the caller text REPLACES the standard
+/// contract entirely, so only the media location survives. Placeholders
+/// (`MEDIA_PATH`, `FRAME_PATHS`) are left literal for the caller to substitute,
+/// same as `build_prompt`.
+const OVERRIDE_INTRO_IMAGE: &str = "The media is a single IMAGE file located at: MEDIA_PATH";
+const OVERRIDE_INTRO_AUDIO: &str = "The media is an AUDIO file located at: MEDIA_PATH";
+const OVERRIDE_INTRO_VIDEO_DIRECT: &str = "The media is a VIDEO file located at: MEDIA_PATH";
+const OVERRIDE_INTRO_VIDEO_FRAMES: &str = "\
+The media is a VIDEO provided as several still FRAMES, evenly spaced in time and in
+chronological order:
+FRAME_PATHS
+The audio track for the same video is located at: MEDIA_PATH";
+
+/// Build the full `--prompt` override: location preamble + caller text + the
+/// sentinel wrap instruction. The ladder detects a successful rung by finding
+/// the sentinels, so they MUST survive the override; everything else about the
+/// output shape is up to the caller. The caller text MAY contain apostrophes —
+/// argv is passed as a vector, never through a shell.
+pub fn build_override_prompt(kind: PromptKind, user_prompt: &str) -> String {
+    let intro = match kind {
+        PromptKind::Image => OVERRIDE_INTRO_IMAGE,
+        PromptKind::Audio => OVERRIDE_INTRO_AUDIO,
+        PromptKind::VideoDirect => OVERRIDE_INTRO_VIDEO_DIRECT,
+        PromptKind::VideoFrames => OVERRIDE_INTRO_VIDEO_FRAMES,
+    };
+    wrap_override(intro, user_prompt)
+}
+
+/// Shared tail for every `--prompt` override: the task, then the sentinel wrap.
+fn wrap_override(intro: &str, user_prompt: &str) -> String {
+    format!(
+        "\
+{intro}
+
+TASK
+{task}
+
+Reply with your complete answer wrapped EXACTLY between the two sentinel lines shown
+below, each on its own line. Do not write anything after the closing sentinel.
+{begin}
+<your answer>
+{end}",
+        task = user_prompt.trim(),
+        begin = SENTINEL_BEGIN,
+        end = SENTINEL_END,
+    )
+}
+
+// --------------------------------------------------------------------------- //
+// Multi-media prompts (several items, ONE call)
+// --------------------------------------------------------------------------- //
+/// Item-list preamble. `ITEMS_BLOCK` is substituted by the caller, which owns
+/// all path handling; templates here stay path-independent.
+const INTRO_MULTI_ITEMS: &str = "\
+You are given SEVERAL media items at once, listed below. Each item starts with a short
+label in square brackets, followed by the file or files that make it up. A video item is
+given as several still frames in chronological order, plus its audio track if it has one.
+
+ITEMS_BLOCK";
+
+const INTRO_MULTI_TASK: &str = "\
+Read EVERY item listed above before answering. Treat them as ONE related set and produce
+ONE report about the set as a whole. Refer to individual items by their bracket labels in
+the Description, and say plainly how they differ where it matters. When a field can hold
+only one value but the items disagree, give the value that fits most of the set. If any
+item has audible speech, transcribe it VERBATIM in the original spoken language inside the
+transcript block, prefixing each part with its item label, and set language to the ISO
+639-1 code of the main spoken language. {TRANSCRIPT_CLAUSE} If no item has speech, set
+has_speech to false, language to none, and emit [no speech detected]. Set people_count to
+the largest number of people visible or audible in any single item. Set notable_timestamp
+to an empty string unless one item clearly owns the most salient moment.";
+
+/// The standard structured contract applied to a SET of items.
+pub fn build_multi_prompt(items_block: &str, want_transcript: bool, translate: bool) -> String {
+    let intro = INTRO_MULTI_ITEMS.replace("ITEMS_BLOCK", items_block);
+    let task = INTRO_MULTI_TASK.replace(
+        "{TRANSCRIPT_CLAUSE}",
+        transcript_clause(want_transcript, translate),
+    );
+    format!("{intro}\n\n{task}\n\n{}", contract())
+}
+
+/// `--prompt` override over a SET of items: only the item list and the sentinel
+/// wrapper survive.
+pub fn build_multi_override_prompt(items_block: &str, user_prompt: &str) -> String {
+    wrap_override(
+        &INTRO_MULTI_ITEMS.replace("ITEMS_BLOCK", items_block),
+        user_prompt,
+    )
+}
+
 fn transcript_clause(want_transcript: bool, translate: bool) -> &'static str {
     if !want_transcript {
         "Do not transcribe. There is no audio available to you. Emit \
@@ -304,6 +395,42 @@ mod tests {
         let p = append_ask(build_prompt(PromptKind::Image, true, true, None), "what lens?");
         assert!(p.contains("what lens?"));
         assert!(p.contains("**Answer:**"));
+    }
+
+    #[test]
+    fn override_prompt_keeps_sentinels_and_is_apostrophe_free() {
+        for k in KINDS {
+            let p = build_override_prompt(*k, "  count the lenses  ");
+            let user_stripped = p.replace("count the lenses", "");
+            assert!(!user_stripped.contains('\''), "override template has an apostrophe");
+            assert!(p.contains("count the lenses"));
+            assert!(p.contains(SENTINEL_BEGIN));
+            assert!(p.contains(SENTINEL_END));
+            assert!(p.contains("MEDIA_PATH"));
+            assert!(!p.contains("schema_version"), "contract leaked into override");
+        }
+        let vf = build_override_prompt(PromptKind::VideoFrames, "x");
+        assert!(vf.contains("FRAME_PATHS"));
+    }
+
+    #[test]
+    fn multi_prompt_keeps_items_and_contract() {
+        let items = "[A] IMAGE\n- /w/A/image.jpg\n[B] AUDIO\n- /w/B/take.wav";
+        for tmpl in [INTRO_MULTI_ITEMS, INTRO_MULTI_TASK] {
+            assert!(!tmpl.contains('\''), "multi template has an apostrophe");
+        }
+        let p = build_multi_prompt(items, true, true);
+        assert!(p.contains("[A] IMAGE") && p.contains("[B] AUDIO"));
+        assert!(p.contains("/w/A/image.jpg"));
+        assert!(!p.contains("ITEMS_BLOCK"));
+        assert!(!p.contains("{TRANSCRIPT_CLAUSE}"));
+        // the full structured contract still applies
+        assert!(p.contains("schema_version: 3") && p.contains(SENTINEL_BEGIN));
+
+        let o = build_multi_override_prompt(items, "which one is sharper?");
+        assert!(o.contains("[B] AUDIO") && o.contains("which one is sharper?"));
+        assert!(o.contains(SENTINEL_END));
+        assert!(!o.contains("schema_version"), "contract leaked into override");
     }
 
     #[test]

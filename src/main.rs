@@ -17,6 +17,7 @@ mod core;
 mod db;
 mod envelope;
 mod ffmpeg;
+mod multi;
 mod parse;
 mod prompt;
 mod source;
@@ -195,10 +196,11 @@ fn dispatch_describe(args: cli::DescribeArgs) -> ExitCode {
     if args.check {
         return cmd_check(&args);
     }
-    let Some(source) = args.source.clone() else {
+    let sources = args.sources.clone();
+    if sources.is_empty() {
         eprintln!("gander: SOURCE is required (or use --check / --version / recall)");
         return ExitCode::from(EXIT_USAGE);
-    };
+    }
 
     // A backend/model mismatch is a usage error (PLAN.md §4).
     if let Err(msg) = validate_pairs(&args) {
@@ -253,9 +255,10 @@ fn dispatch_describe(args: cli::DescribeArgs) -> ExitCode {
         max_duration: args.max_duration,
         keep_temp: args.keep_temp,
         ask: args.ask.clone(),
+        prompt: args.prompt.clone(),
     };
 
-    let result = core::describe_media(&source, &opts, &cfg);
+    let result = core::describe_many(&sources, &opts, &cfg);
 
     match args.output_format {
         OutputFormat::Json => println!("{}", result.to_json_pretty()),
@@ -606,6 +609,14 @@ fn render_raw(r: &MediaResult) -> String {
                 &r.backend.model_used
             }
         ));
+    }
+
+    // Multi-media: the description talks in labels, so print the key.
+    if r.sources.len() > 1 {
+        out.push_str(&format!("\n\nITEMS ({})", r.sources.len()));
+        for (i, s) in r.sources.iter().enumerate() {
+            out.push_str(&format!("\n  [{}] {s}", crate::multi::label_for(i)));
+        }
     }
 
     if r.status == Status::Failed {

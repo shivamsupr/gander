@@ -183,6 +183,17 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     Ok(hex(&hasher.finalize()))
 }
 
+/// Identity for a SET of files: sha256 over the member hashes in call order.
+/// Order is part of it — the labels the model answers about follow that order.
+pub fn sha256_of_hashes(hashes: &[String]) -> String {
+    let mut hasher = Sha256::new();
+    for h in hashes {
+        hasher.update(h.as_bytes());
+        hasher.update(b"\n");
+    }
+    hex(&hasher.finalize())
+}
+
 fn hex(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {

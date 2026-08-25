@@ -80,8 +80,24 @@ fn build_frames_call(
     want_transcript: bool,
     translate: bool,
     has_audio: bool,
+    prompt_override: Option<&str>,
 ) -> MediaCall {
     let bulleted = frames_block(frame_paths);
+    let audio_label = audio_path
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "(no audio track)".into());
+
+    if let Some(p) = prompt_override {
+        let o = crate::prompt::build_override_prompt(PromptKind::VideoFrames, p)
+            .replace("FRAME_PATHS", &bulleted);
+        return MediaCall {
+            kind: "video",
+            add_dir: add_dir.to_string(),
+            prompt_full: o.replace("MEDIA_PATH", &audio_label),
+            prompt_vision: o.replace("MEDIA_PATH", "(no audio available to vision-only backend)"),
+            has_audio,
+        };
+    }
 
     let full = build_prompt(
         PromptKind::VideoFrames,
@@ -90,12 +106,7 @@ fn build_frames_call(
         Some(offset_label),
     )
     .replace("FRAME_PATHS", &bulleted)
-    .replace(
-        "MEDIA_PATH",
-        &audio_path
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "(no audio track)".into()),
-    );
+    .replace("MEDIA_PATH", &audio_label);
 
     // claude is vision-only: never transcribe, never reads audio.
     let vision = build_prompt(
@@ -167,11 +178,22 @@ pub fn route_video(
                 max_frames.min(6),
                 fps,
             );
-            let full = build_prompt(PromptKind::VideoDirect, want_transcript, translate, None)
-                .replace("MEDIA_PATH", &spath.display().to_string());
-            let vision = build_prompt(PromptKind::VideoFrames, false, translate, Some("00:00"))
-                .replace("FRAME_PATHS", &frames_block(&claude_frames))
-                .replace("MEDIA_PATH", "(no audio available to vision-only backend)");
+            let (full, vision) = match &opts.prompt {
+                Some(p) => (
+                    crate::prompt::build_override_prompt(PromptKind::VideoDirect, p)
+                        .replace("MEDIA_PATH", &spath.display().to_string()),
+                    crate::prompt::build_override_prompt(PromptKind::VideoFrames, p)
+                        .replace("FRAME_PATHS", &frames_block(&claude_frames))
+                        .replace("MEDIA_PATH", "(no audio available to vision-only backend)"),
+                ),
+                None => (
+                    build_prompt(PromptKind::VideoDirect, want_transcript, translate, None)
+                        .replace("MEDIA_PATH", &spath.display().to_string()),
+                    build_prompt(PromptKind::VideoFrames, false, translate, Some("00:00"))
+                        .replace("FRAME_PATHS", &frames_block(&claude_frames))
+                        .replace("MEDIA_PATH", "(no audio available to vision-only backend)"),
+                ),
+            };
             let call = MediaCall {
                 kind: "video",
                 add_dir: parent.display().to_string(),
@@ -206,6 +228,7 @@ pub fn route_video(
                 want_transcript,
                 translate,
                 probe.has_audio_stream,
+                opts.prompt.as_deref(),
             )
             .with_ask(opts.ask.as_deref());
             let br = run_ladder(&call, primary, fallback, cfg, None);
@@ -295,6 +318,8 @@ pub fn route_video(
                     want_transcript,
                     translate,
                     cprobe.has_audio_stream,
+                    // core rejects --prompt on the chunked tier before routing here.
+                    None,
                 );
 
                 let br = run_ladder(&call, primary, fallback, cfg, Some(idx));

@@ -188,6 +188,10 @@ pub struct MediaResult {
     pub media: MediaMeta,
     pub backend: BackendInfo,
     pub source_path: Option<String>,
+    /// Every analyzed source, in label order (`[A]`, `[B]`, …). One entry for a
+    /// normal describe; several in multi-media mode, where `source_path` holds
+    /// only the first and the description refers to items by label.
+    pub sources: Vec<String>,
     pub schema_version: String,
     pub tool_version: String,
 }
@@ -218,6 +222,7 @@ impl MediaResult {
             structured: None,
             media: MediaMeta::default(),
             backend: BackendInfo::default(),
+            sources: path.iter().cloned().collect(),
             source_path: path,
             schema_version: SCHEMA_VERSION.to_string(),
             tool_version: TOOL_VERSION.to_string(),
@@ -245,6 +250,7 @@ impl MediaResult {
             backend: BackendView::from(&self.backend),
             schema_version: &self.schema_version,
             tool_version: &self.tool_version,
+            sources: &self.sources,
         }
     }
 
@@ -282,6 +288,9 @@ pub struct Envelope<'a> {
     pub backend: BackendView<'a>,
     pub schema_version: &'a str,
     pub tool_version: &'a str,
+    /// Appended AFTER the original keys on purpose: adding a key is additive for
+    /// consumers, moving one is not.
+    pub sources: &'a [String],
 }
 
 #[derive(Serialize)]
