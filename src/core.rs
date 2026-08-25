@@ -40,6 +40,11 @@ pub struct DescribeOptions {
     pub max_chunks: Option<u32>,
     pub max_duration: Option<f64>,
     pub keep_temp: bool,
+    /// Free-form caller question, answered as an `**Answer:**` line inside the
+    /// Description. Bypasses the cache in both directions: a cached row would not
+    /// contain the answer, and an ask-flavored description must not overwrite the
+    /// canonical cached one.
+    pub ask: Option<String>,
 }
 
 /// Resolve the primary + fallback rungs from flags/defaults. Defaults: primary
@@ -121,7 +126,7 @@ pub fn describe_media(path: &str, opts: &DescribeOptions, cfg: &Config) -> Media
     };
 
     // 2) cache lookup — return BEFORE probe on a hit (instant $0 read).
-    if !opts.force {
+    if !opts.force && opts.ask.is_none() {
         if let Some(c) = &conn {
             if let Some(mut hit) = db::lookup(c, &sha) {
                 hit.source_path = Some(spath.display().to_string());
@@ -174,7 +179,8 @@ pub fn describe_media(path: &str, opts: &DescribeOptions, cfg: &Config) -> Media
 
     let (br, chunk_count, chunked) = match kind {
         MediaKind::Image => {
-            let call = image_call(&spath, cfg, work.path(), &mut warnings);
+            let call = image_call(&spath, cfg, work.path(), &mut warnings)
+                .with_ask(opts.ask.as_deref());
             (
                 run_ladder(&call, &primary, fallback.as_ref(), cfg, None),
                 0,
@@ -182,7 +188,7 @@ pub fn describe_media(path: &str, opts: &DescribeOptions, cfg: &Config) -> Media
             )
         }
         MediaKind::Audio => {
-            let call = audio_call(&spath, &probe, opts);
+            let call = audio_call(&spath, &probe, opts).with_ask(opts.ask.as_deref());
             (
                 run_ladder(&call, &primary, fallback.as_ref(), cfg, None),
                 1,
@@ -221,7 +227,9 @@ pub fn describe_media(path: &str, opts: &DescribeOptions, cfg: &Config) -> Media
         chunked,
         warnings,
     );
-    maybe_write(&mut conn, &mut res, opts.force);
+    if opts.ask.is_none() {
+        maybe_write(&mut conn, &mut res, opts.force);
+    }
     res
 }
 

@@ -178,6 +178,12 @@ pub struct DescribeArgs {
     #[arg(long, value_enum, default_value_t = OutputFormat::Raw)]
     pub output_format: OutputFormat,
 
+    /// Free-form question about the media, answered as a final `**Answer:**`
+    /// line inside the Description. Bypasses the cache (read and write).
+    /// Ignored on chunked video (>60s).
+    #[arg(long, value_name = "TEXT")]
+    pub ask: Option<String>,
+
     /// Primary model.
     #[arg(long, value_enum)]
     pub model: Option<Model>,

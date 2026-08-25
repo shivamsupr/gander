@@ -252,6 +252,7 @@ fn dispatch_describe(args: cli::DescribeArgs) -> ExitCode {
         max_chunks: args.max_chunks,
         max_duration: args.max_duration,
         keep_temp: args.keep_temp,
+        ask: args.ask.clone(),
     };
 
     let result = core::describe_media(&source, &opts, &cfg);

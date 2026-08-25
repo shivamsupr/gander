@@ -147,6 +147,28 @@ notable_timestamp: <MM:SS of the most salient moment, or empty string>
     )
 }
 
+/// Extra instruction for `--ask`: the caller question is answered as one final
+/// `**Answer:**` line inside the Description section, so the envelope and parser
+/// are untouched. `ASK_TEXT` is substituted here (user text MAY contain
+/// apostrophes — argv is passed as a vector, never through a shell).
+const ASK_TEMPLATE: &str = "\
+ADDITIONAL QUESTION
+Beyond the standard report, the caller also asks: ASK_TEXT
+Answer this question from what you can actually observe in the media. Be specific,
+justify briefly from visible or audible evidence, and say unclear if you cannot tell.
+Emit the answer INSIDE the ## Description section as one final line starting with
+**Answer:** on its own line. Do not add any other section and keep every other rule
+unchanged.";
+
+/// Append the `--ask` clause to an already-built prompt.
+pub fn append_ask(prompt: String, question: &str) -> String {
+    format!(
+        "{}\n\n{}",
+        prompt,
+        ASK_TEMPLATE.replace("ASK_TEXT", question.trim())
+    )
+}
+
 fn transcript_clause(want_transcript: bool, translate: bool) -> &'static str {
     if !want_transcript {
         "Do not transcribe. There is no audio available to you. Emit \
@@ -274,6 +296,14 @@ mod tests {
         assert!(vf.contains("MEDIA_PATH"));
         assert!(!vf.contains("OFFSET_LABEL") && vf.contains("01:00"));
         assert!(!vf.contains("{TRANSCRIPT_CLAUSE}"));
+    }
+
+    #[test]
+    fn ask_clause_appended_and_apostrophe_free_template() {
+        assert!(!ASK_TEMPLATE.contains('\''), "ask template has an apostrophe");
+        let p = append_ask(build_prompt(PromptKind::Image, true, true, None), "what lens?");
+        assert!(p.contains("what lens?"));
+        assert!(p.contains("**Answer:**"));
     }
 
     #[test]

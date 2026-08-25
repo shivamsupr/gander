@@ -178,7 +178,8 @@ pub fn route_video(
                 prompt_full: full,
                 prompt_vision: vision,
                 has_audio: probe.has_audio_stream,
-            };
+            }
+            .with_ask(opts.ask.as_deref());
             let br = run_ladder(&call, primary, fallback, cfg, None);
             VideoOutcome {
                 result: br,
@@ -205,7 +206,8 @@ pub fn route_video(
                 want_transcript,
                 translate,
                 probe.has_audio_stream,
-            );
+            )
+            .with_ask(opts.ask.as_deref());
             let br = run_ladder(&call, primary, fallback, cfg, None);
             VideoOutcome {
                 result: br,
@@ -217,6 +219,13 @@ pub fn route_video(
 
         // ---------------- CHUNKED (>60s) ----------------
         VideoTier::Chunked => {
+            // The merge synthesis only sees per-chunk text, so a caller question
+            // cannot be answered from the media itself on this tier.
+            if opts.ask.is_some() {
+                warnings.push(
+                    "ask_ignored: chunked video (>60s) does not support --ask".into(),
+                );
+            }
             // Widen chunk length so total chunks <= max_chunks (widen, do not truncate).
             let mut eff_chunk_len = chunk_length;
             if let Some(d) = d {
@@ -241,7 +250,8 @@ pub fn route_video(
                     prompt_full: full.clone(),
                     prompt_vision: full,
                     has_audio: probe.has_audio_stream,
-                };
+                }
+                .with_ask(opts.ask.as_deref());
                 let br = run_ladder(&call, primary, fallback, cfg, None);
                 return VideoOutcome {
                     result: br,

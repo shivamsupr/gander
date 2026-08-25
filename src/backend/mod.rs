@@ -193,6 +193,17 @@ pub struct MediaCall {
     pub has_audio: bool,
 }
 
+impl MediaCall {
+    /// Append the `--ask` clause to both prompt variants. No-op when `ask` is None.
+    pub fn with_ask(mut self, ask: Option<&str>) -> Self {
+        if let Some(q) = ask {
+            self.prompt_full = crate::prompt::append_ask(self.prompt_full, q);
+            self.prompt_vision = crate::prompt::append_ask(self.prompt_vision, q);
+        }
+        self
+    }
+}
+
 /// The pluggable backend contract. The ladder never touches backend specifics.
 pub trait AgentBackend {
     fn name(&self) -> &'static str;
