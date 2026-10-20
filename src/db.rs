@@ -694,11 +694,11 @@ mod tests {
                 chunk_count: 6,
             },
             backend: BackendInfo {
-                model_used: "Gemini 3.5 Flash (High)".into(),
+                model_used: "Gemini 3.8 Flash (High)".into(),
                 backend_used: "agy".into(),
                 attempts: vec![Attempt {
                     backend: "agy".into(),
-                    model: "Gemini 3.5 Flash (High)".into(),
+                    model: "Gemini 3.8 Flash (High)".into(),
                     ok: true,
                     error_class: None,
                     elapsed_s: 64.1,

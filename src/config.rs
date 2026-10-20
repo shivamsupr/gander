@@ -14,8 +14,12 @@ pub const SENTINEL_BEGIN: &str = "===GANDER-BEGIN===";
 pub const SENTINEL_END: &str = "===GANDER-END===";
 
 // Exact agy model strings — a typo silently falls back to agy's default, so frozen.
-pub const FLASH: &str = "Gemini 3.5 Flash (High)";
-pub const PRO: &str = "Gemini 3.1 Pro (High)";
+// Check them against `agy models` when a probe fails with "not recognized as a
+// known model". On 2026-10-20 agy dropped every Pro model and renamed Flash to
+// 3.8, which took the whole fleet's media analysis down until these were updated.
+// `pro` now resolves to the highest Flash effort agy offers.
+pub const FLASH: &str = "Gemini 3.8 Flash (High)";
+pub const PRO: &str = "Gemini 3.8 Flash (High)";
 /// Chunk-prose synthesis runs on the cheapest reliable rung.
 pub const SYNTH_MODEL: &str = FLASH;
 
