@@ -17,9 +17,11 @@ pub const SENTINEL_END: &str = "===GANDER-END===";
 // Check them against `agy models` when a probe fails with "not recognized as a
 // known model". On 2026-10-20 agy dropped every Pro model and renamed Flash to
 // 3.8, which took the whole fleet's media analysis down until these were updated.
-// `pro` now resolves to the highest Flash effort agy offers.
-pub const FLASH: &str = "Gemini 3.8 Flash (High)";
-pub const PRO: &str = "Gemini 3.8 Flash (High)";
+// Both aliases resolve to the Medium effort: measured on the audio probe the same
+// day, Medium answered in 39 s and High was still thinking at 5 min, past
+// PRINT_TIMEOUT_S, so High is unusable here.
+pub const FLASH: &str = "Gemini 3.8 Flash (Medium)";
+pub const PRO: &str = "Gemini 3.8 Flash (Medium)";
 /// Chunk-prose synthesis runs on the cheapest reliable rung.
 pub const SYNTH_MODEL: &str = FLASH;
 
