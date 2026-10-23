@@ -45,7 +45,9 @@ pub const FRAME_LONG_EDGE: u32 = 1280;
 pub const JPEG_QV: u32 = 3;
 
 // Timeouts (seconds).
-pub const PRINT_TIMEOUT_S: f64 = 300.0;
+// 540 s since 2026-10-23: Gemini 3.8 Flash (Medium) takes 40 s to 4m40s+ on the
+// 2.6 s audio probe; at 300 s half the gander-watch runs needed a retry.
+pub const PRINT_TIMEOUT_S: f64 = 540.0;
 pub const CLAUDE_TIMEOUT_S: f64 = 180.0;
 pub const LADDER_DEADLINE_S: f64 = 700.0;
 pub const SYNTH_TIMEOUT_S: f64 = 120.0;
