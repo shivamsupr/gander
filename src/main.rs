@@ -455,33 +455,68 @@ fn cmd_check(args: &cli::DescribeArgs) -> ExitCode {
     ExitCode::from(if all_ok { EXIT_OK } else { EXIT_BACKEND })
 }
 
-/// One line per probe: what answered, how long it took, and why it failed.
+/// One line per media type and rung: what ran, how long it took, and why it
+/// failed.
 fn render_deep(report: &serde_json::Value) -> String {
     let mut out = Vec::new();
-    for name in deep::KINDS.iter().chain(["ffprobe", "ffmpeg"].iter()) {
-        let Some(v) = report.get(*name) else { continue };
+    for kind in deep::KINDS {
+        let Some(v) = report.get(kind) else { continue };
+        let mut rows = 0;
+        for role in ["primary", "fallback"] {
+            let Some(r) = v.get(role) else { continue };
+            rows += 1;
+            let s = |k: &str| r.get(k).and_then(|x| x.as_str()).unwrap_or("");
+            let flag = |k: &str| r.get(k).and_then(|x| x.as_bool()).unwrap_or(false);
+            // The concrete model that answered, when there is one: `pro` alone
+            // does not say what ran.
+            let model = match s("model_used") {
+                "" => s("model"),
+                used => used,
+            };
+            let who = format!("{}/{model}", s("backend"));
+            if flag("skipped") {
+                out.push(format!(
+                    "{kind:<6} {role:<9} – skip  {who}  ({})",
+                    s("detail")
+                ));
+                continue;
+            }
+            let icon = if flag("ok") { "● ok  " } else { "✖ fail" };
+            let took = r.get("took_s").and_then(|l| l.as_f64()).unwrap_or(0.0);
+            let mut line = format!("{kind:<6} {role:<9} {icon}  {who}  {took:.1}s");
+            if r.get("tries").and_then(|l| l.as_u64()).unwrap_or(1) > 1 {
+                line.push_str("  (retried)");
+            }
+            if !s("note").is_empty() {
+                line.push_str(&format!("  ({})", s("note")));
+            }
+            out.push(line);
+            if !flag("ok") {
+                out.push(format!("                 {}", truncate(s("detail"), 220)));
+                for f in r
+                    .get("raw")
+                    .and_then(|x| x.as_array())
+                    .into_iter()
+                    .flatten()
+                {
+                    out.push(format!(
+                        "                 raw output: {}",
+                        f.as_str().unwrap_or("")
+                    ));
+                }
+            }
+        }
+        let detail = v.get("detail").and_then(|x| x.as_str()).unwrap_or("");
+        if rows == 0 || !detail.is_empty() {
+            out.push(format!("{kind:<6} {:<9} ✖ fail  {detail}", ""));
+        }
+    }
+    for name in ["ffprobe", "ffmpeg"] {
+        let Some(v) = report.get(name) else { continue };
         let ok = v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
-        let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("");
-        if v.get("path").is_some() {
-            let icon = if ok { "● ok  " } else { "✖ missing" };
-            out.push(format!("{name:<8} {icon}  {}", s("path")));
-            continue;
-        }
-        let icon = if ok { "● ok  " } else { "✖ fail" };
-        let took = v.get("took_s").and_then(|l| l.as_f64()).unwrap_or(0.0);
-        let tries = v.get("tries").and_then(|l| l.as_u64()).unwrap_or(1);
-        let who = match (s("backend_used"), s("model_used")) {
-            ("", _) => "no backend answered".to_string(),
-            (b, m) => format!("{b}/{m}"),
-        };
-        let mut line = format!("{name:<8} {icon}  {who}  {took:.1}s");
-        if tries > 1 {
-            line.push_str(&format!("  ({tries} tries)"));
-        }
-        out.push(line);
-        if !ok {
-            out.push(format!("         {}", truncate(s("detail"), 200)));
-        }
+        let icon = if ok { "● ok  " } else { "✖ missing" };
+        let path = v.get("path").and_then(|x| x.as_str()).unwrap_or("");
+        out.push(format!("{name:<16} {icon}  {path}"));
     }
     out.join("\n")
 }

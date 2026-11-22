@@ -8,8 +8,11 @@ Dates are YYYY-MM-DD. The newest entry is first.
 
 - `gander --models` lists the models each backend offers, with a class per model. It
   asks the backends for their live lists (`agy models`, `codex debug models`).
-- `gander --check --deep[=KINDS]` runs a bundled image, audio file, and video through
-  your configured primary and fallback, and checks the content of each answer.
+- `gander --check --deep[=KINDS]` runs a bundled image, audio file, and video on your
+  configured primary and on your fallback, each one alone, and checks the content of each
+  answer. A failed probe is retried once after 45 seconds.
+- `GANDER_RAW_DIR` saves what a backend printed on every try that gave no answer. The
+  deep check always does this, in `~/.gander/probe-raw`.
 - `error_class: model_unknown`, for a model name the backend does not know. Before, such
   a call was reported as `empty`.
 - `error_class: not_installed`, for a backend whose CLI is not on `PATH`.

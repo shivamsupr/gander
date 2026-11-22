@@ -264,6 +264,59 @@ pub fn env_minus(strip: &[&str]) -> HashMap<String, String> {
         .collect()
 }
 
+/// How many raw files to keep in the raw directory.
+const RAW_KEEP: usize = 20;
+
+/// Save what a backend printed on an attempt that gave no answer. Without this,
+/// a failure is one word (`empty`, `fatal`) and the next one is just as opaque.
+/// Best effort: a write error here must never change the result of the call.
+fn keep_raw(
+    dir: &std::path::Path,
+    backend: &str,
+    model: &str,
+    ecls: ErrorClass,
+    detail: &str,
+    exit_code: Option<i32>,
+    output: &str,
+) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = dir.join(format!("{ms}-{backend}-{}.txt", ecls.as_str()));
+    let body = format!(
+        "backend: {backend}\nmodel: {model}\nerror_class: {}\ndetail: {detail}\n\
+         exit_code: {exit_code:?}\n--- output ({} bytes) ---\n{output}\n",
+        ecls.as_str(),
+        output.len()
+    );
+    if std::fs::write(&path, body).is_err() {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    // The file names start with a millisecond stamp, so name order is age order.
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "txt"))
+        .collect();
+    files.sort();
+    let extra = files.len().saturating_sub(RAW_KEEP);
+    for old in files.into_iter().take(extra) {
+        let _ = std::fs::remove_file(old);
+    }
+}
+
 /// Is `bin` a program we can start? `Config` resolves each backend to an absolute
 /// path when it finds it on `PATH`, and leaves the bare name when it does not.
 pub fn installed(bin: &str) -> bool {
@@ -383,6 +436,11 @@ fn run_one(
     let clean = parse::strip_ansi(&combined);
     let answer = parse::extract_answer(&raw.stdout);
     let (ecls, detail) = classify_error(&clean, raw.exit_code, raw.timed_out, answer.is_some());
+    if ecls != ErrorClass::Ok {
+        if let Some(dir) = &cfg.raw_dir {
+            keep_raw(dir, be.name(), model, ecls, &detail, raw.exit_code, &clean);
+        }
+    }
     let att = AttemptRec {
         backend: be.name(),
         model: model.to_string(),
@@ -501,6 +559,34 @@ mod model_unknown_tests {
         let out = "warning: unknown model metadata\n===GANDER-BEGIN===";
         assert_eq!(class(out, true), ErrorClass::Ok);
         assert_eq!(class("", false), ErrorClass::Empty);
+    }
+
+    #[test]
+    fn keep_raw_writes_the_output_and_prunes_old_files() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..RAW_KEEP + 3 {
+            keep_raw(
+                dir.path(),
+                "agy",
+                "some-model",
+                ErrorClass::Empty,
+                "no answer block in output",
+                Some(0),
+                &format!("output number {i}"),
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let mut files: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        files.sort();
+        assert_eq!(files.len(), RAW_KEEP);
+        let newest = std::fs::read_to_string(files.last().unwrap()).unwrap();
+        assert!(newest.contains(&format!("output number {}", RAW_KEEP + 2)));
+        assert!(newest.contains("error_class: empty"));
+        assert!(newest.contains("model: some-model"));
     }
 
     #[test]

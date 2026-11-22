@@ -95,6 +95,10 @@ pub struct Config {
     pub jpeg_qv: u32,
     // db
     pub db_busy_timeout_ms: i64,
+    /// Where to keep the raw output of every backend attempt that did not give
+    /// an answer (`GANDER_RAW_DIR`). `None` keeps nothing. The deep check sets
+    /// it, so a failed probe leaves something to diagnose.
+    pub raw_dir: Option<PathBuf>,
 }
 
 /// Overrides supplied by CLI flags (highest precedence).
@@ -173,6 +177,10 @@ impl Config {
             frame_long_edge: FRAME_LONG_EDGE,
             jpeg_qv: JPEG_QV,
             db_busy_timeout_ms: DB_BUSY_TIMEOUT_MS,
+            raw_dir: env::var("GANDER_RAW_DIR")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(|s| expanduser(&s)),
         }
     }
 }

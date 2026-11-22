@@ -235,9 +235,9 @@ pub struct DescribeArgs {
     #[arg(long)]
     pub check: bool,
 
-    /// With `--check`: run real media through your configured primary and
-    /// fallback, and check the answers. KINDS is any of `image`, `audio`, `video`
-    /// (default: all three). Costs one real call per kind.
+    /// With `--check`: run real media on your configured primary and on your
+    /// fallback, each one alone, and check the answers. KINDS is any of `image`,
+    /// `audio`, `video` (default: all three). Costs up to two real calls per kind.
     #[arg(
         long,
         value_name = "KINDS",

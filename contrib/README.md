@@ -42,13 +42,15 @@ These files run `gander --check --deep` on a schedule and tell you when it fails
 
 ## What to expect
 
-- **Cost.** Each run makes three real backend calls, one per media type. Every
-  6 hours is a good default.
-- **Time.** A run takes 1 to 3 minutes when the backends are healthy, and longer
-  when one of them times out.
+- **Cost.** Each run makes one real call per media type on your primary, and one
+  more on your fallback. That is up to six calls. Every 6 hours is a good default.
+- **Time.** A run takes 2 to 4 minutes when the backends are healthy. A failed
+  probe waits 45 seconds and tries once more, and a timeout takes much longer.
+- **Failures.** The report names a file with the raw output of the backend for
+  each failed probe. The files are in `~/.gander/probe-raw`.
 - **Alerts.** At most one alert every 12 hours. Change it with
   `GANDER_ALERT_EVERY` (seconds).
 - **Log.** `~/.gander/watch.log` has one line per run, and the full report for
   each failed run.
 - **A backend with no audio.** `claude` cannot hear. If it is your only backend,
-  the audio and video probes always fail. Set `GANDER_WATCH_ARGS='--deep=image'`.
+  the audio probe always fails. Set `GANDER_WATCH_ARGS='--deep=image,video'`.

@@ -90,7 +90,7 @@ gander depends on CLIs that change without notice. Two checks tell you what work
 | Command | What it sends | What it proves | Cost |
 |---|---|---|---|
 | `gander --check` | one text prompt to each backend, on a fixed model | the backend is installed and logged in | 1 call per backend |
-| `gander --check --deep` | a real image, audio file, and video, through your configured primary and fallback | each media type gives a correct answer | 1 call per media type |
+| `gander --check --deep` | a real image, audio file, and video, to your configured primary and to your fallback | each media type gives a correct answer on each of the two | up to 2 calls per media type |
 
 **`--check` does not test media and does not test your configured model.** A green
 row there can sit next to dead audio. Use `--check --deep` for that.
@@ -104,12 +104,14 @@ gander --check --deep --backend codex --model gpt-6.2-sol --fallback-model none
 ```
 
 ```
-image    ● ok    agy/gemini-4-neon-medium  33.5s
-audio    ● ok    agy/gemini-4-neon-medium  59.8s
-video    ✖ fail  claude/claude-sonnet-5-5  14.0s
-         no transcript: the backend that answered did not process the audio
-ffprobe  ● ok    /opt/homebrew/bin/ffprobe
-ffmpeg   ● ok    /opt/homebrew/bin/ffmpeg
+image  primary   ● ok    agy/gemini-4-neon-medium  33.3s
+image  fallback  ● ok    claude/claude-opus-5-5  13.3s
+audio  primary   ● ok    agy/gemini-4-neon-medium  56.6s
+audio  fallback  – skip  claude/opus  (claude cannot process audio)
+video  primary   ● ok    agy/gemini-4-neon-medium  30.2s
+video  fallback  ● ok    claude/claude-opus-5-5  16.7s  (speech not checked: claude cannot process audio)
+ffprobe          ● ok    /opt/homebrew/bin/ffprobe
+ffmpeg           ● ok    /opt/homebrew/bin/ffmpeg
 ```
 
 Three small files are built into the binary (see [`assets/probe`](assets/probe)). The
@@ -119,17 +121,24 @@ deep check does not trust `status`. It reads the answer:
 - **audio:** the transcript must match the spoken sentence.
 - **video:** both.
 
-This matters because a failure can look like success. When the audio path of one backend
-dies and a fallback with no audio support answers, a normal call returns `partial` with a
-confident description and no transcript. The deep check reports that as a failure.
+**It tests the primary and the fallback separately.** A real call only reaches the
+fallback when the primary fails. So a check that follows the same path would never test
+the fallback while the primary works. It would also hide a dead primary: when the audio
+path of one backend dies and a fallback with no audio support answers, a normal call
+returns `partial` with a confident description and no transcript.
 
 - It uses the same primary and fallback as a real call: flags, then `GANDER_*` env, then
   the config file.
 - It never reads or writes your cache.
-- It retries each probe once, because one empty answer from a backend is common.
-- It exits `0` when every probe passes, and `4` when one fails.
-- `claude` cannot hear. With only `claude`, the audio and video probes always fail. Use
-  `--deep=image`.
+- It retries a failed probe once, after 45 seconds (`GANDER_PROBE_RETRY_WAIT_S`). One
+  empty answer from a backend is common. It does not retry a missing CLI, a dead login,
+  or an unknown model.
+- When a probe fails, the output of the backend is saved, and the report prints the path.
+  The files go to `~/.gander/probe-raw` (`GANDER_RAW_DIR`), and the newest 20 are kept.
+- It exits `0` when every tested probe passes, and `4` when one fails.
+- `claude` cannot hear. Its audio probe is skipped, and its video probe checks the picture
+  only. If no configured backend can hear, the audio probe fails. Use `--deep=image` then.
+- The cost is one call per media type for the primary, and one more for the fallback.
 
 To run it on a schedule and get an alert, see [`contrib`](contrib).
 
@@ -405,7 +414,12 @@ Env vars: `GANDER_DB_PATH`, `GANDER_AGY_BIN` / `GANDER_CLAUDE_BIN` / `GANDER_COD
 `GANDER_MODEL_DEFAULT` / `GANDER_BACKEND_DEFAULT` /
 `GANDER_FALLBACK_MODEL_DEFAULT` / `GANDER_FALLBACK_BACKEND_DEFAULT`,
 `GANDER_PRINT_TIMEOUT_S`, `GANDER_CHUNK_LEN_S` / `GANDER_MAX_CHUNKS`,
-`GANDER_MAX_DURATION_S`, `GANDER_MAX_FRAMES` / `GANDER_FRAME_FPS`.
+`GANDER_MAX_DURATION_S`, `GANDER_MAX_FRAMES` / `GANDER_FRAME_FPS`,
+`GANDER_RAW_DIR`, `GANDER_PROBE_RETRY_WAIT_S`.
+
+`GANDER_RAW_DIR` also works for normal calls. When it is set, gander saves what a backend
+printed on every try that gave no answer. Use it to find out what `empty` or `fatal`
+really was.
 
 ## Security
 
