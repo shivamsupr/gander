@@ -312,15 +312,15 @@ agent choose, taken from the family word in the model name:
 |---|---|
 | `above-pro` | `fable`, `astra` |
 | `pro` | `neon`, `opus`, `sol` |
-| `mid` | `terra`, `carbon` |
-| `flash` | `hydrogen`, `luna`, `flash` |
+| `mid` | `terra`, `carbon`, `sonnet`, `argon` |
+| `flash` | `hydrogen`, `luna`, `flash`, `haiku` |
 
 Change or extend this in `~/.gander/config.toml`. Your entries win over the built-in ones:
 
 ```toml
 [classes]
-mid = ["sonnet", "argon"]
-flash = ["haiku"]
+mid = ["oss"]
+pro = ["terra"]
 ```
 
 ### Video tiers (picked automatically from the duration)

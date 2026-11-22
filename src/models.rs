@@ -165,8 +165,8 @@ pub fn model_for(kind: BackendKind, selector: &str) -> String {
 const DEFAULT_CLASSES: &[(&str, &[&str])] = &[
     ("above-pro", &["fable", "astra"]),
     ("pro", &["neon", "opus", "sol"]),
-    ("mid", &["terra", "carbon"]),
-    ("flash", &["hydrogen", "luna", "flash"]),
+    ("mid", &["terra", "carbon", "sonnet", "argon"]),
+    ("flash", &["hydrogen", "luna", "flash", "haiku"]),
     // Listed so that `gemini-pro-orchestrator-neon` is not classed by its
     // `neon` suffix: an orchestrator is a different kind of model.
     ("unknown", &["orchestrator"]),
@@ -360,9 +360,12 @@ mod tests {
             ("gemini-4-hydrogen-xhigh", "flash"),
             ("gpt-6-luna", "flash"),
             ("Gemini 3.8 Flash (Medium)", "flash"),
-            ("gemini-4-argon-low", "unknown"),
+            ("gemini-4-argon-low", "mid"),
+            ("claude-sonnet-5-5", "mid"),
+            ("claude-sonnet-5-5-high", "mid"),
+            ("claude-haiku-5-5", "flash"),
             ("gemini-pro-orchestrator-neon", "unknown"),
-            ("claude-sonnet-5-5", "unknown"),
+            ("gemini-pro-orchestrator-argon", "unknown"),
             ("gpt-oss-120b-medium", "unknown"),
         ] {
             assert_eq!(c.of(name), class, "{name}");
@@ -372,14 +375,12 @@ mod tests {
     #[test]
     fn config_classes_override_and_extend() {
         let mut o = BTreeMap::new();
-        o.insert(
-            "mid".to_string(),
-            vec!["Sonnet".to_string(), "argon".into()],
-        );
+        // A new family word in any letter case, and a built-in word moved.
+        o.insert("mid".to_string(), vec!["OSS".to_string(), "xenon".into()]);
         o.insert("pro".to_string(), vec!["terra".to_string()]);
         let c = Classes::with_overrides(&o);
-        assert_eq!(c.of("claude-sonnet-5-5"), "mid");
-        assert_eq!(c.of("gemini-4-argon-high"), "mid");
+        assert_eq!(c.of("gpt-oss-120b-medium"), "mid");
+        assert_eq!(c.of("gemini-5-xenon-high"), "mid");
         assert_eq!(c.of("gpt-6.1-terra"), "pro");
         assert_eq!(c.of("gemini-4-neon-low"), "pro");
     }
