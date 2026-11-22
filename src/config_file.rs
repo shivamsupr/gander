@@ -1,11 +1,12 @@
 //! Persisted user defaults (`~/.gander/config.toml`) + the TTY-gated first-run
 //! prompt. Holds the four selectors `model` / `backend` / `fallback_model` /
-//! `fallback_backend`.
+//! `fallback_backend`, and the optional `[classes]` table.
 //!
 //! Per-setting precedence (resolved in `main`): flag, then `GANDER_*` env, then the
 //! config file, then the built-in default. The interactive prompt only fires on a real
 //! TTY (stdin+stderr); a non-interactive run (the agent path) never prompts or writes.
 
+use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
@@ -17,6 +18,10 @@ pub struct FileDefaults {
     pub backend: Option<String>,
     pub fallback_model: Option<String>,
     pub fallback_backend: Option<String>,
+    /// `[classes]`: class name → model family keywords. Applied on top of the
+    /// built-in classes (see `models::Classes`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub classes: BTreeMap<String, Vec<String>>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -61,7 +66,9 @@ pub fn maybe_first_run(no_config: bool, force: bool) -> Option<FileDefaults> {
         return None;
     }
 
-    let d = prompt_defaults();
+    let mut d = prompt_defaults();
+    // `--reconfigure` asks only for the four selectors. Keep the user's classes.
+    d.classes = load(false).classes;
     if let Err(e) = write(&d) {
         eprintln!("[gander] could not write {}: {e}", path.display());
         return None;
@@ -70,9 +77,14 @@ pub fn maybe_first_run(no_config: bool, force: bool) -> Option<FileDefaults> {
     Some(d)
 }
 
-/// The models valid for a backend, and that backend's default (first = default).
-fn models_for(backend: &str) -> Vec<&'static str> {
-    crate::models::selectors_for(backend)
+/// The models to offer for a backend, its default first. Asks the backend for
+/// its live list and falls back to the built-in one.
+fn models_for(backend: &str) -> Vec<String> {
+    let Some(kind) = crate::backend::BackendKind::from_str(backend) else {
+        return Vec::new();
+    };
+    let cfg = crate::config::Config::load(&Default::default());
+    crate::models::names(kind, &cfg, true).0
 }
 
 /// Raw config file contents, or `None` if no file exists.
@@ -94,15 +106,15 @@ pub fn clear() -> std::io::Result<bool> {
 fn prompt_defaults() -> FileDefaults {
     eprintln!("gander first-run — choose defaults (↑/↓ to move, Enter to select):");
 
-    // Backend first, then a model scoped to that backend → always a compatible pair.
+    // Backend first, then a model of that backend → always a compatible pair.
     let backend = pick("Primary backend", &["agy", "claude", "codex"]);
-    let model = pick("Primary model", &models_for(&backend));
+    let model = pick_model("Primary model", &backend);
 
     let fb_backend = pick("Fallback backend", &["agy", "claude", "codex", "none"]);
     let fallback_model = if fb_backend == "none" {
         "none".to_string()
     } else {
-        pick("Fallback model", &models_for(&fb_backend))
+        pick_model("Fallback model", &fb_backend)
     };
 
     FileDefaults {
@@ -110,7 +122,14 @@ fn prompt_defaults() -> FileDefaults {
         backend: Some(backend),
         fallback_model: Some(fallback_model),
         fallback_backend: Some(fb_backend),
+        classes: BTreeMap::new(),
     }
+}
+
+fn pick_model(label: &str, backend: &str) -> String {
+    let models = models_for(backend);
+    let refs: Vec<&str> = models.iter().map(String::as_str).collect();
+    pick(label, &refs)
 }
 
 /// Arrow-key single-select over `choices` (the first is highlighted by default).
@@ -153,12 +172,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn models_scoped_to_backend() {
-        // The interactive picker offers only the chosen backend's models, so a
-        // saved (backend, model) pair is always compatible by construction.
-        assert_eq!(models_for("agy")[..2], ["pro", "flash"]);
-        assert_eq!(models_for("claude"), ["sonnet", "haiku", "opus", "fable"]);
-        assert_eq!(models_for("codex")[0], "gpt-6.2-sol");
+    fn classes_table_round_trips_and_is_optional() {
+        let d: FileDefaults = toml::from_str("model = \"pro\"\n").unwrap();
+        assert!(d.classes.is_empty());
+        // No empty `[classes]` header is written for a user who has none.
+        assert!(!toml::to_string_pretty(&d).unwrap().contains("classes"));
+
+        let d: FileDefaults =
+            toml::from_str("model = \"pro\"\n[classes]\nmid = [\"sonnet\"]\n").unwrap();
+        assert_eq!(d.classes["mid"], ["sonnet"]);
+        let back: FileDefaults = toml::from_str(&toml::to_string_pretty(&d).unwrap()).unwrap();
+        assert_eq!(back.classes["mid"], ["sonnet"]);
+    }
+
+    #[test]
+    fn unknown_backend_offers_no_models() {
         assert!(models_for("nonsense").is_empty());
     }
 }

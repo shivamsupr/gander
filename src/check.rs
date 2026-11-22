@@ -93,7 +93,7 @@ fn probe_backend(kind: BackendKind, cfg: &Config, prompt: &str, add_dir: &str) -
     }
 }
 
-fn bin_ok(path: &str) -> Value {
+pub fn bin_ok(path: &str) -> Value {
     let p = Path::new(path);
     let ok = p.is_absolute() && p.exists();
     json!({ "ok": ok, "path": path })

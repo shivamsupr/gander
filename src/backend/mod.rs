@@ -1,11 +1,9 @@
 //! Backend engine: drive an agentic CLI and classify its outcome.
 //!
-//! - `pty`   — the load-bearing PTY runner (M1).
-//! - `agy`   — agy adapter: argv + env + PTY run (M2).
-//! - error taxonomy `classify_error` lives here.
-//!
-//! The `AgentBackend` trait + primary/fallback ladder + claude/codex adapters land
-//! in M3 on top of these pieces.
+//! - `pty` / `piped` — the two runners (agy needs a PTY, the others a pipe).
+//! - `agy` / `claude` / `codex` — one small adapter each, behind `AgentBackend`.
+//! - `classify_error` — the error taxonomy.
+//! - `run_ladder` — the primary → fallback sequence.
 
 pub mod agy;
 pub mod claude;
@@ -32,6 +30,11 @@ pub enum ErrorClass {
     Transient,
     Auth,
     Empty,
+    /// The harness does not know the model name (renamed, removed, or not part
+    /// of this account's plan).
+    ModelUnknown,
+    /// The backend's CLI is not on this machine (or not on `PATH`).
+    NotInstalled,
     Fatal,
 }
 
@@ -44,6 +47,8 @@ impl ErrorClass {
             ErrorClass::Transient => "transient",
             ErrorClass::Auth => "auth",
             ErrorClass::Empty => "empty",
+            ErrorClass::ModelUnknown => "model_unknown",
+            ErrorClass::NotInstalled => "not_installed",
             ErrorClass::Fatal => "fatal",
         }
     }
@@ -98,6 +103,23 @@ fn auth_re() -> &'static Regex {
     })
 }
 
+/// How each harness says "I do not know that model". None of them fails loudly:
+/// agy prints its model list and exits 0, claude and codex exit 0 with an error
+/// line. Without this class a renamed model reads as `empty`.
+///
+/// - agy:    `invalid model selection ... is not recognized as a known model`
+/// - claude: `[claude-code:unrecognized_model]`
+/// - codex:  `The 'x' model is not supported when using Codex with ...`
+fn model_unknown_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"invalid model selection|not recognized as a known model|unrecognized_model|model is not supported|model_not_found|unknown model",
+        )
+        .unwrap()
+    })
+}
+
 fn transient_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
@@ -108,7 +130,7 @@ fn transient_re() -> &'static Regex {
     })
 }
 
-/// `(class, short_detail)`. AUTH before OK; a clean answer beats a capacity warning.
+/// `(class, short_detail)`. AUTH before OK; a clean answer beats every warning.
 pub fn classify_error(
     text: &str,
     exit_code: Option<i32>,
@@ -122,6 +144,12 @@ pub fn classify_error(
     }
     if answer_found {
         return (ErrorClass::Ok, String::new());
+    }
+    if let Some(m) = model_unknown_re().find(&low) {
+        return (
+            ErrorClass::ModelUnknown,
+            format!("the backend rejected the model: {:?}", m.as_str()),
+        );
     }
     if timed_out {
         return (ErrorClass::Timeout, "wall-clock kill".into());
@@ -156,7 +184,7 @@ pub fn classify_error(
 }
 
 // --------------------------------------------------------------------------- //
-// Adapter contract — one trait, three small impls (PLAN.md §4).
+// Adapter contract — one trait, three small impls.
 // --------------------------------------------------------------------------- //
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
@@ -236,6 +264,44 @@ pub fn env_minus(strip: &[&str]) -> HashMap<String, String> {
         .collect()
 }
 
+/// Is `bin` a program we can start? `Config` resolves each backend to an absolute
+/// path when it finds it on `PATH`, and leaves the bare name when it does not.
+pub fn installed(bin: &str) -> bool {
+    let p = std::path::Path::new(bin);
+    p.is_absolute() && p.exists()
+}
+
+/// What the caller should run next after a failed ladder. This line is how an
+/// agent that never reads the README finds the diagnostic commands.
+pub fn next_step(attempts: &[AttemptRec]) -> String {
+    let unknown: Vec<&AttemptRec> = attempts
+        .iter()
+        .filter(|a| a.error_class == ErrorClass::ModelUnknown)
+        .collect();
+    let missing: Vec<&str> = attempts
+        .iter()
+        .filter(|a| a.error_class == ErrorClass::NotInstalled)
+        .map(|a| a.backend)
+        .collect();
+    if let Some(b) = missing.first() {
+        return format!(
+            "the `{b}` CLI is not installed or not on PATH: choose a backend you have with \
+             `--backend` (agy, claude, codex) or `gander --reconfigure`, or set GANDER_{}_BIN",
+            b.to_uppercase()
+        );
+    }
+    match unknown.first() {
+        Some(a) => format!(
+            "{} does not know the model {:?}: run `gander --models --backend {}` to list \
+             the models it offers",
+            a.backend, a.model, a.backend
+        ),
+        None => "Run `gander --check --deep` to test each media type on your configured \
+                 backends"
+            .to_string(),
+    }
+}
+
 // --------------------------------------------------------------------------- //
 // Run one rung + the primary→fallback ladder.
 // --------------------------------------------------------------------------- //
@@ -261,6 +327,27 @@ fn run_one(
     };
     let timeout = be.timeout_s(cfg);
     let argv = be.build_argv(prompt, &call.add_dir, model, timeout);
+    // A missing CLI is the first thing a new user hits. Say so plainly, before
+    // the runner turns it into an opaque exec error.
+    if !installed(&argv[0]) {
+        let detail = format!("{} not found", argv[0]);
+        let att = AttemptRec {
+            backend: be.name(),
+            model: model.to_string(),
+            error_class: ErrorClass::NotInstalled,
+            error_detail: detail.clone(),
+            elapsed_s: 0.0,
+            answer_len: 0,
+            chunk,
+        };
+        return OneRun {
+            att,
+            stdout: String::new(),
+            ecls: ErrorClass::NotInstalled,
+            detail,
+            vision_only: !be.supports_audio(),
+        };
+    }
     let env = be.env();
     let dur = Duration::from_secs_f64(timeout);
 
@@ -373,6 +460,7 @@ pub fn run_ladder(
         .map(|a| format!("{}/{}:{}", a.backend, a.model, a.error_class.as_str()))
         .collect::<Vec<_>>()
         .join("; ");
+    let error = format!("all backends exhausted: {trail}. {}", next_step(&attempts));
     BackendResult {
         ok: false,
         backend: None,
@@ -381,6 +469,61 @@ pub fn run_ladder(
         vision_only: false,
         attempts,
         aborted_auth: false,
-        error: format!("all backends exhausted: {trail}"),
+        error,
+    }
+}
+
+#[cfg(test)]
+mod model_unknown_tests {
+    use super::*;
+
+    fn class(text: &str, answer_found: bool) -> ErrorClass {
+        classify_error(text, Some(0), false, answer_found).0
+    }
+
+    #[test]
+    fn each_harness_rejection_is_model_unknown() {
+        // Captured from the real CLIs. All three exit 0.
+        let agy = "error: invalid model selection (--model \"bogus\" --effort \"\"): model \
+                   bogus is not recognized as a known model or custom model in settings\n\
+                   Available models:\n  Gemini 4 Neon (High)\n";
+        let claude = "[claude-code:unrecognized_model] {\"model\":\"bogus\"}";
+        let codex = "ERROR: The 'gpt-5.5' model is not supported when using Codex with a \
+                     ChatGPT account.";
+        for out in [agy, claude, codex] {
+            assert_eq!(class(out, false), ErrorClass::ModelUnknown, "{out}");
+        }
+    }
+
+    #[test]
+    fn a_real_answer_beats_a_model_warning() {
+        // codex warns about missing metadata for a new model and still answers.
+        let out = "warning: unknown model metadata\n===GANDER-BEGIN===";
+        assert_eq!(class(out, true), ErrorClass::Ok);
+        assert_eq!(class("", false), ErrorClass::Empty);
+    }
+
+    #[test]
+    fn next_step_names_the_models_command_for_an_unknown_model() {
+        let att = |cls| AttemptRec {
+            backend: "codex",
+            model: "gpt-5.5".into(),
+            error_class: cls,
+            error_detail: String::new(),
+            elapsed_s: 1.0,
+            answer_len: 0,
+            chunk: None,
+        };
+        let s = next_step(&[att(ErrorClass::ModelUnknown)]);
+        assert!(s.contains("gander --models --backend codex"), "{s}");
+        assert!(s.contains("gpt-5.5"), "{s}");
+        let s = next_step(&[att(ErrorClass::Timeout)]);
+        assert!(s.contains("gander --check --deep"), "{s}");
+        let s = next_step(&[att(ErrorClass::NotInstalled)]);
+        assert!(
+            s.contains("not installed") && s.contains("GANDER_CODEX_BIN"),
+            "{s}"
+        );
+        assert!(!installed("surely-not-a-real-binary"));
     }
 }

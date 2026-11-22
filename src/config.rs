@@ -3,7 +3,7 @@
 //! PATH → name (no hardcoded paths or usernames).
 //!
 //! `Config::load()` resolves everything once per run. Per-setting precedence is
-//! flag > `GANDER_*` env > (config file, M6) > built-in default.
+//! flag > `GANDER_*` env > config file > built-in default.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -13,28 +13,28 @@ use std::path::{Path, PathBuf};
 pub const SENTINEL_BEGIN: &str = "===GANDER-BEGIN===";
 pub const SENTINEL_END: &str = "===GANDER-END===";
 
-// agy model slugs. Check them against `agy models` when a run fails.
-// An unknown name does not fail loudly: agy prints its model list and exits 0, so
-// gander reports `empty`. On 2026-10-20 agy dropped every Pro model and renamed
-// Flash to 3.8, which took the whole fleet's media analysis down, and both aliases
-// then ran Gemini 3.8 Flash (Medium) as a stopgap.
-// Since 2026-11-22 the aliases match their class again: Neon is the pro-class
-// family and Hydrogen the flash-class one. Both use the Medium effort. Measured
-// that day on a 5 s speech file: Neon Medium 43 s (exact transcript), Hydrogen
-// Medium 27 s (one word misheard). The High efforts are not measured; on 3.8
-// Flash, High ran past 5 min on audio.
+// What gander's agy aliases run: `flash` and `pro`. These are agy slugs, as
+// printed by `agy models`, and they change when agy renames its models. agy does
+// not fail loudly on an unknown name: it prints its model list and exits 0, which
+// gander reports as `model_unknown`.
+// Both aliases use the Medium effort. The higher efforts can run for minutes on a
+// few seconds of audio.
 pub const FLASH: &str = "gemini-4-hydrogen-medium";
 pub const PRO: &str = "gemini-4-neon-medium";
 /// Chunk-prose synthesis runs on the cheapest reliable rung.
 pub const SYNTH_MODEL: &str = FLASH;
 
-// claude CLI model ids (a different namespace from agy).
-// Updated 2026-11-22 to the ids the `sonnet` / `haiku` / `opus` / `fable` aliases
-// of claude 2.1.326 resolve to. The codex ids and the agy slugs live in `models.rs`.
+// What gander's claude aliases run. claude has no command that lists its models;
+// `claude --model sonnet` shows the id an alias resolves to.
 pub const CLAUDE_SONNET: &str = "claude-sonnet-5-5";
 pub const CLAUDE_HAIKU: &str = "claude-haiku-5-5";
 pub const CLAUDE_OPUS: &str = "claude-opus-5-5";
 pub const CLAUDE_FABLE: &str = "claude-fable-5-2";
+
+/// Stands for "pass no model flag": the harness then uses its own configured
+/// model. This is the codex default, because the codex model list depends on the
+/// account.
+pub const HARNESS_DEFAULT: &str = "default";
 
 // Video-tier thresholds (half-open, no overlap).
 pub const DIRECT_MAX_S: f64 = 30.0; // d <  DIRECT_MAX_S            -> DIRECT
@@ -48,17 +48,15 @@ pub const FRAME_LONG_EDGE: u32 = 1280;
 pub const JPEG_QV: u32 = 3;
 
 // Timeouts (seconds).
-// 540 s since 2026-10-23: Gemini 3.8 Flash (Medium) took 40 s to 4m40s+ on the
-// 2.6 s audio probe; at 300 s half the gander-watch runs needed a retry.
+// The per-call limit is generous on purpose: the same model can answer a short
+// audio file in 40 s on one run and in almost 5 min on the next.
 pub const PRINT_TIMEOUT_S: f64 = 540.0;
 pub const CLAUDE_TIMEOUT_S: f64 = 180.0;
 pub const LADDER_DEADLINE_S: f64 = 700.0;
 pub const SYNTH_TIMEOUT_S: f64 = 120.0;
-// The probe sends the FULL report contract, so it costs what a real analysis
-// costs: agy/flash needs ~40s and agy/pro was measured at 51.8s. At the old 45s
-// agy could never pass --check while being perfectly healthy, and the failure
-// rendered as `down` — indistinguishable from a dead login. Keep this above the
-// slowest real backend, not merely above the fastest.
+// The `--check` probe sends the full report prompt, so it costs what a real
+// analysis costs (40 to 60 s on agy). A limit below that makes a healthy backend
+// show as down. Keep this above the slowest backend, not above the fastest.
 pub const CHECK_TIMEOUT_S: f64 = 120.0;
 
 pub const DB_BUSY_TIMEOUT_MS: i64 = 5000;

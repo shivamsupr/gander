@@ -456,7 +456,7 @@ impl Status {
 }
 
 // --------------------------------------------------------------------------- //
-// Recall (read API) — used by the `recall` subcommand (M6).
+// Recall (read API) — used by the `recall` subcommand.
 // --------------------------------------------------------------------------- //
 #[derive(Debug, Default, Clone)]
 pub struct RecallFilters {

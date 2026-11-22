@@ -1,4 +1,4 @@
-//! clap entry, dispatch, and exit-code mapping (PLAN.md §2 exit contract).
+//! clap entry, dispatch, and exit-code mapping.
 //!
 //! Exit codes: 0 ok/partial · 1 unexpected · 2 usage · 3 input (`failed`) ·
 //! 4 backend/auth. `partial` exits 0 — read the JSON `status`/`warnings`.
@@ -15,6 +15,7 @@ mod config;
 mod config_file;
 mod core;
 mod db;
+mod deep;
 mod envelope;
 mod ffmpeg;
 mod models;
@@ -206,24 +207,40 @@ fn dispatch_describe(args: cli::DescribeArgs) -> ExitCode {
         return ExitCode::from(EXIT_USAGE);
     }
 
-    // A backend/model mismatch is a usage error (PLAN.md §4).
-    if let Err(msg) = validate_pairs(&args) {
-        eprintln!("gander: {msg}");
-        return ExitCode::from(EXIT_USAGE);
-    }
-
     // First-run: persist defaults if interactive and no config yet.
     config_file::maybe_first_run(args.no_config, false);
+    let (opts, cfg) = match resolve(&args) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("gander: {msg}");
+            return ExitCode::from(EXIT_USAGE);
+        }
+    };
+
+    let result = core::describe_many(&sources, &opts, &cfg);
+
+    match args.output_format {
+        OutputFormat::Json => println!("{}", result.to_json_pretty()),
+        OutputFormat::Raw => println!("{}", render_raw(&result)),
+    }
+
+    ExitCode::from(exit_for(&result))
+}
+
+/// Resolve the describe options and the runtime config for one invocation.
+/// Per-setting precedence: flag > `GANDER_*` env > config file > built-in.
+/// `Err` is a usage error: a model named together with a backend it cannot
+/// belong to.
+fn resolve(args: &cli::DescribeArgs) -> Result<(DescribeOptions, Config), String> {
+    validate_pairs(args)?;
     let file = config_file::load(args.no_config);
+    let cfg = Config::load(&overrides_from(args));
 
-    let cfg = Config::load(&overrides_from(&args));
-
-    // Per-setting precedence: flag > GANDER_* env > config file > built-in.
     let model = pick(
         args.model.clone(),
         "GANDER_MODEL_DEFAULT",
         file.model,
-        "pro",
+        config::MODEL_DEFAULT,
     );
     let backend = pick(
         args.backend.map(backend_str),
@@ -261,15 +278,7 @@ fn dispatch_describe(args: cli::DescribeArgs) -> ExitCode {
         ask: args.ask.clone(),
         prompt: args.prompt.clone(),
     };
-
-    let result = core::describe_many(&sources, &opts, &cfg);
-
-    match args.output_format {
-        OutputFormat::Json => println!("{}", result.to_json_pretty()),
-        OutputFormat::Raw => println!("{}", render_raw(&result)),
-    }
-
-    ExitCode::from(exit_for(&result))
+    Ok((opts, cfg))
 }
 
 /// flag > `GANDER_*` env > config file > built-in.
@@ -346,47 +355,86 @@ fn tri(yes: bool, no: bool) -> Option<bool> {
     }
 }
 
-fn cmd_models(args: &cli::DescribeArgs) -> ExitCode {
-    let which = args.backend.map(|b| match b {
+fn kind_of(b: Backend) -> backend::BackendKind {
+    match b {
         Backend::Agy => backend::BackendKind::Agy,
         Backend::Claude => backend::BackendKind::Claude,
         Backend::Codex => backend::BackendKind::Codex,
-    });
-    let list = models::listing(which);
+    }
+}
+
+fn cmd_models(args: &cli::DescribeArgs) -> ExitCode {
+    let cfg = Config::load(&overrides_from(args));
+    let classes = models::Classes::with_overrides(&config_file::load(args.no_config).classes);
+    let list = models::listing(args.backend.map(kind_of), &cfg, &classes);
     match args.output_format {
         OutputFormat::Json => println!(
             "{}",
             serde_json::to_string_pretty(&list).unwrap_or_else(|_| "{}".into())
         ),
-        OutputFormat::Raw => {
-            for (backend, rows) in list.as_object().into_iter().flatten() {
-                println!("{backend}");
-                for r in rows.as_array().into_iter().flatten() {
-                    let s = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("");
-                    let (name, runs) = (s("name"), s("runs"));
-                    let mut line = format!("  {name:<30} {:<10}", s("class"));
-                    if runs != name {
-                        line.push_str(&format!(" runs {runs}"));
-                    }
-                    if r.get("default").and_then(|v| v.as_bool()) == Some(true) {
-                        line.push_str(" (default)");
-                    }
-                    println!("{}", line.trim_end());
-                }
-            }
-        }
+        OutputFormat::Raw => println!("{}", render_models(&list)),
     }
     ExitCode::from(EXIT_OK)
 }
 
+fn render_models(list: &serde_json::Value) -> String {
+    let mut out = Vec::new();
+    for (name, _) in models::BACKENDS {
+        let Some(b) = list.get(name) else { continue };
+        let note = match b.get("source").and_then(|v| v.as_str()).unwrap_or("") {
+            "live" => "live list from the backend",
+            "aliases" => "aliases only: claude has no list command, any model id is passed through",
+            _ => "built-in list: the backend did not answer, so this may be out of date",
+        };
+        out.push(format!("{name}  ({note})"));
+        for r in b
+            .get("models")
+            .and_then(|m| m.as_array())
+            .into_iter()
+            .flatten()
+        {
+            let s = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("");
+            let (model, runs) = (s("name"), s("runs"));
+            let mut line = format!("  {model:<30} {:<10}", s("class"));
+            if runs == config::HARNESS_DEFAULT {
+                line.push_str(" the model set in the backend's own config");
+            } else if runs != model {
+                line.push_str(&format!(" runs {runs}"));
+            }
+            if r.get("default").and_then(|v| v.as_bool()) == Some(true) {
+                line.push_str(" (default)");
+            }
+            out.push(line.trim_end().to_string());
+        }
+    }
+    out.join("\n")
+}
+
 fn cmd_check(args: &cli::DescribeArgs) -> ExitCode {
-    let cfg = Config::load(&overrides_from(args));
-    let which = args.backend.map(|b| match b {
-        Backend::Agy => backend::BackendKind::Agy,
-        Backend::Claude => backend::BackendKind::Claude,
-        Backend::Codex => backend::BackendKind::Codex,
-    });
-    let report = check::health_probe(&cfg, which);
+    let (report, text) = match &args.deep {
+        Some(kinds) => {
+            let (opts, cfg) = match resolve(args) {
+                Ok(v) => v,
+                Err(msg) => {
+                    eprintln!("gander: {msg}");
+                    return ExitCode::from(EXIT_USAGE);
+                }
+            };
+            let mut report = deep::deep_probe(kinds, &opts, &cfg);
+            if let Some(m) = report.as_object_mut() {
+                m.insert("ffprobe".into(), check::bin_ok(&cfg.ffprobe_bin));
+                m.insert("ffmpeg".into(), check::bin_ok(&cfg.ffmpeg_bin));
+            }
+            let text = render_deep(&report);
+            (report, text)
+        }
+        None => {
+            let cfg = Config::load(&overrides_from(args));
+            let report = check::health_probe(&cfg, args.backend.map(kind_of));
+            let text = render_check(&report);
+            (report, text)
+        }
+    };
     let all_ok = report
         .as_object()
         .map(|m| {
@@ -402,9 +450,40 @@ fn cmd_check(args: &cli::DescribeArgs) -> ExitCode {
                 serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".into())
             )
         }
-        OutputFormat::Raw => println!("{}", render_check(&report)),
+        OutputFormat::Raw => println!("{text}"),
     }
     ExitCode::from(if all_ok { EXIT_OK } else { EXIT_BACKEND })
+}
+
+/// One line per probe: what answered, how long it took, and why it failed.
+fn render_deep(report: &serde_json::Value) -> String {
+    let mut out = Vec::new();
+    for name in deep::KINDS.iter().chain(["ffprobe", "ffmpeg"].iter()) {
+        let Some(v) = report.get(*name) else { continue };
+        let ok = v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
+        let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("");
+        if v.get("path").is_some() {
+            let icon = if ok { "● ok  " } else { "✖ missing" };
+            out.push(format!("{name:<8} {icon}  {}", s("path")));
+            continue;
+        }
+        let icon = if ok { "● ok  " } else { "✖ fail" };
+        let took = v.get("took_s").and_then(|l| l.as_f64()).unwrap_or(0.0);
+        let tries = v.get("tries").and_then(|l| l.as_u64()).unwrap_or(1);
+        let who = match (s("backend_used"), s("model_used")) {
+            ("", _) => "no backend answered".to_string(),
+            (b, m) => format!("{b}/{m}"),
+        };
+        let mut line = format!("{name:<8} {icon}  {who}  {took:.1}s");
+        if tries > 1 {
+            line.push_str(&format!("  ({tries} tries)"));
+        }
+        out.push(line);
+        if !ok {
+            out.push(format!("         {}", truncate(s("detail"), 200)));
+        }
+    }
+    out.join("\n")
 }
 
 fn render_recall_table(rows: &[serde_json::Value]) -> String {
@@ -544,8 +623,8 @@ fn check_pair(backend: &str, model: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "backend {backend} is incompatible with model {model} ({backend} models: {})",
-            models::selectors_for(backend).join("|")
+            "model {model} belongs to a different backend than {backend} \
+             (run `gander --models --backend {backend}` to list its models)"
         ))
     }
 }
@@ -586,7 +665,7 @@ fn fallback_backend_str(b: cli::FallbackBackend) -> String {
     .to_string()
 }
 
-/// Minimal human render (the full colored markdown render lands with recall in M6).
+/// The human-readable render of one result.
 fn render_raw(r: &MediaResult) -> String {
     let mut out = String::new();
     let head = match r.status {

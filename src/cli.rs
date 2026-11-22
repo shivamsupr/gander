@@ -1,4 +1,4 @@
-//! clap arg structs — the single CLI surface (PLAN.md §2).
+//! clap arg structs — the single CLI surface.
 //!
 //! `describe` is the default form (bare `gander SOURCE [opts]`); `recall` is a
 //! read-only cache-browse subcommand. stdout carries the result only; logs go to
@@ -12,18 +12,6 @@ pub enum OutputFormat {
     Raw,
     /// Canonical JSON envelope (the agent contract).
     Json,
-}
-
-/// `--model` choices: every selector in the `models.rs` table.
-fn model_choices() -> clap::builder::PossibleValuesParser {
-    clap::builder::PossibleValuesParser::new(crate::models::all_selectors())
-}
-
-/// `--fallback-model` choices: the same list, plus `none` (no second attempt).
-fn fallback_model_choices() -> clap::builder::PossibleValuesParser {
-    let mut v = crate::models::all_selectors();
-    v.push("none");
-    clap::builder::PossibleValuesParser::new(v)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -171,8 +159,9 @@ pub struct DescribeArgs {
     #[arg(long, value_name = "TEXT", conflicts_with = "ask")]
     pub prompt: Option<String>,
 
-    /// Primary model. Each backend has its own list; see the README table.
-    #[arg(long, value_parser = model_choices(), hide_possible_values = true)]
+    /// Primary model: a gander alias (`pro`, `flash`, `sonnet`, ...) or any model
+    /// name the backend accepts. `gander --models` lists them.
+    #[arg(long, value_name = "NAME")]
     pub model: Option<String>,
 
     /// Primary backend.
@@ -180,7 +169,7 @@ pub struct DescribeArgs {
     pub backend: Option<Backend>,
 
     /// Model for the fallback attempt (`none` = no fallback).
-    #[arg(long, value_parser = fallback_model_choices(), hide_possible_values = true)]
+    #[arg(long, value_name = "NAME")]
     pub fallback_model: Option<String>,
 
     /// Backend for the fallback attempt (`none` = no fallback).
@@ -235,14 +224,31 @@ pub struct DescribeArgs {
     #[arg(long, value_name = "S")]
     pub timeout: Option<f64>,
 
-    /// List every accepted model per backend, with its class (ignores SOURCE).
-    /// `--backend` limits the list to one backend.
+    /// List the models each backend offers, with a class per model (ignores
+    /// SOURCE). Asks the backends for their live lists. `--backend` limits the
+    /// list to one backend.
     #[arg(long)]
     pub models: bool,
 
-    /// Health-probe the backends (ignores SOURCE).
+    /// Health-probe the backends (ignores SOURCE). Alone, it sends one text
+    /// prompt per backend: that proves the login works, nothing more.
     #[arg(long)]
     pub check: bool,
+
+    /// With `--check`: run real media through your configured primary and
+    /// fallback, and check the answers. KINDS is any of `image`, `audio`, `video`
+    /// (default: all three). Costs one real call per kind.
+    #[arg(
+        long,
+        value_name = "KINDS",
+        requires = "check",
+        num_args = 0..=1,
+        require_equals = true,
+        value_delimiter = ',',
+        default_missing_value = "image,audio,video",
+        value_parser = ["image", "audio", "video"]
+    )]
+    pub deep: Option<Vec<String>>,
 
     /// Re-run the first-run interactive setup and rewrite ~/.gander/config.toml.
     #[arg(long)]

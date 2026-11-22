@@ -1,5 +1,4 @@
-//! codex adapter — `codex exec`, piped, agy-class modality. Resolved against the
-//! live Codex v0.130.0 probe (see PLAN.md §4 / §8):
+//! codex adapter — `codex exec`, piped, agy-class modality:
 //!
 //! - `exec` is the headless subcommand; the **prompt is positional** (no `-p`).
 //! - `--yolo` = `approval:never` + `sandbox:danger-full-access` (full bypass);
@@ -44,7 +43,7 @@ impl AgentBackend for Codex {
             "-c".into(),
             "model_reasoning_effort=\"low\"".into(),
         ];
-        if !model.is_empty() {
+        if !model.is_empty() && model != crate::config::HARNESS_DEFAULT {
             argv.push("-m".into());
             argv.push(model.to_string());
         }

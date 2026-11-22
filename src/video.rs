@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::backend::{run_ladder, AttemptRec, BackendKind, BackendResult, MediaCall, Rung};
-use crate::config::{Config, FLASH, SENTINEL_BEGIN, SENTINEL_END, SYNTH_MODEL};
+use crate::config::{Config, SENTINEL_BEGIN, SENTINEL_END, SYNTH_MODEL};
 use crate::core::DescribeOptions;
 use crate::envelope::{Structured, Technical};
 use crate::ffmpeg::{self, ProbeInfo};
@@ -372,7 +372,7 @@ pub fn route_video(
                 });
             }
 
-            let result = merge_chunks(&pieces, all_attempts, any_vision_only, cfg, work);
+            let result = merge_chunks(&pieces, all_attempts, any_vision_only, primary, cfg, work);
             VideoOutcome {
                 result,
                 tier,
@@ -652,9 +652,28 @@ fn merge_transcript(pieces: &[ChunkPiece]) -> (Option<String>, Option<String>) {
 }
 
 // --------------------------------------------------------------------------- //
-// Prose synthesis (one Flash text-only call; deterministic fallback)
+// Prose synthesis (one cheap text-only call; deterministic fallback)
 // --------------------------------------------------------------------------- //
-fn synthesize_prose(pieces: &[ChunkPiece], cfg: &Config, synth_dir: &Path) -> (String, String) {
+
+/// The rung that merges the chunk descriptions. The merge is a small text job, so
+/// an agy user gets agy's cheap model for it. Anyone else gets their own primary:
+/// they may not have agy at all.
+fn synth_rung(primary: &Rung) -> Rung {
+    match primary.kind {
+        BackendKind::Agy => Rung {
+            kind: BackendKind::Agy,
+            model: SYNTH_MODEL.to_string(),
+        },
+        _ => primary.clone(),
+    }
+}
+
+fn synthesize_prose(
+    pieces: &[ChunkPiece],
+    primary: &Rung,
+    cfg: &Config,
+    synth_dir: &Path,
+) -> (String, String) {
     let mut ordered: Vec<&ChunkPiece> = pieces.iter().collect();
     ordered.sort_by_key(|p| p.index);
 
@@ -679,7 +698,6 @@ fn synthesize_prose(pieces: &[ChunkPiece], cfg: &Config, synth_dir: &Path) -> (S
     }
 
     let merge_prompt = build_merge_prompt().replace("SEGMENTS_BLOCK", &blocks.join("\n"));
-    let _ = SYNTH_MODEL; // == FLASH
     let call = MediaCall {
         kind: "video",
         add_dir: synth_dir.display().to_string(),
@@ -687,12 +705,7 @@ fn synthesize_prose(pieces: &[ChunkPiece], cfg: &Config, synth_dir: &Path) -> (S
         prompt_vision: merge_prompt,
         has_audio: false,
     };
-    // Synthesis is always agy/Flash, regardless of the user's backend choice.
-    let synth_rung = Rung {
-        kind: BackendKind::Agy,
-        model: FLASH.to_string(),
-    };
-    let br = run_ladder(&call, &synth_rung, None, cfg, None);
+    let br = run_ladder(&call, &synth_rung(primary), None, cfg, None);
     if br.ok {
         let m = parse::parse_merge_response(&br.answer);
         if m.parse_ok && !m.description.is_empty() {
@@ -745,6 +758,7 @@ fn merge_chunks(
     pieces: &[ChunkPiece],
     attempts: Vec<AttemptRec>,
     any_vision_only: bool,
+    primary: &Rung,
     cfg: &Config,
     synth_dir: &Path,
 ) -> BackendResult {
@@ -768,7 +782,7 @@ fn merge_chunks(
 
     let structured = merge_structured(pieces);
     let (transcript, translation) = merge_transcript(pieces);
-    let (summary, prose) = synthesize_prose(pieces, cfg, synth_dir);
+    let (summary, prose) = synthesize_prose(pieces, primary, cfg, synth_dir);
 
     let yaml_block = serde_yaml::to_string(&structured)
         .unwrap_or_else(|_| "{}".into())
@@ -807,6 +821,23 @@ fn merge_chunks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_step_stays_on_the_users_backend() {
+        let agy = Rung {
+            kind: BackendKind::Agy,
+            model: "gemini-4-neon-high".into(),
+        };
+        assert_eq!(synth_rung(&agy).model, SYNTH_MODEL);
+        // A codex-only or claude-only user has no agy to call.
+        let codex = Rung {
+            kind: BackendKind::Codex,
+            model: "default".into(),
+        };
+        let r = synth_rung(&codex);
+        assert_eq!(r.kind, BackendKind::Codex);
+        assert_eq!(r.model, "default");
+    }
     use crate::config::ConfigOverrides;
 
     fn pr(
