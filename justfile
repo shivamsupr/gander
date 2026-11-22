@@ -56,9 +56,18 @@ clippy:
 describe SOURCE *ARGS:
     cargo run --quiet -- "{{SOURCE}}" --output-format json {{ARGS}}
 
-# Health-probe the backends + ffmpeg.
+# Health-probe the backends + ffmpeg (one text prompt per backend).
 check:
     cargo run --quiet -- --check
+
+# Run the bundled image, audio and video files through the configured backends.
+#   just check-deep            ·   just check-deep --deep=audio
+check-deep *ARGS:
+    cargo run --quiet -- --check --deep {{ARGS}}
+
+# List the models each backend offers.
+models *ARGS:
+    cargo run --quiet -- --models {{ARGS}}
 
 # Browse the cache (read-only). Extra flags pass through.
 #   just recall --kind image --limit 5

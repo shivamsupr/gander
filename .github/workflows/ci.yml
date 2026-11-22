@@ -19,7 +19,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --bin gander   # 63 deterministic tests; live backends are #[ignore]
+      - run: cargo test --bin gander   # deterministic tests only; live backends are #[ignore]
 
   musl-static:
     runs-on: ubuntu-latest

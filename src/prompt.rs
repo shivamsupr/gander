@@ -391,8 +391,14 @@ mod tests {
 
     #[test]
     fn ask_clause_appended_and_apostrophe_free_template() {
-        assert!(!ASK_TEMPLATE.contains('\''), "ask template has an apostrophe");
-        let p = append_ask(build_prompt(PromptKind::Image, true, true, None), "what lens?");
+        assert!(
+            !ASK_TEMPLATE.contains('\''),
+            "ask template has an apostrophe"
+        );
+        let p = append_ask(
+            build_prompt(PromptKind::Image, true, true, None),
+            "what lens?",
+        );
         assert!(p.contains("what lens?"));
         assert!(p.contains("**Answer:**"));
     }
@@ -402,12 +408,18 @@ mod tests {
         for k in KINDS {
             let p = build_override_prompt(*k, "  count the lenses  ");
             let user_stripped = p.replace("count the lenses", "");
-            assert!(!user_stripped.contains('\''), "override template has an apostrophe");
+            assert!(
+                !user_stripped.contains('\''),
+                "override template has an apostrophe"
+            );
             assert!(p.contains("count the lenses"));
             assert!(p.contains(SENTINEL_BEGIN));
             assert!(p.contains(SENTINEL_END));
             assert!(p.contains("MEDIA_PATH"));
-            assert!(!p.contains("schema_version"), "contract leaked into override");
+            assert!(
+                !p.contains("schema_version"),
+                "contract leaked into override"
+            );
         }
         let vf = build_override_prompt(PromptKind::VideoFrames, "x");
         assert!(vf.contains("FRAME_PATHS"));
@@ -430,7 +442,10 @@ mod tests {
         let o = build_multi_override_prompt(items, "which one is sharper?");
         assert!(o.contains("[B] AUDIO") && o.contains("which one is sharper?"));
         assert!(o.contains(SENTINEL_END));
-        assert!(!o.contains("schema_version"), "contract leaked into override");
+        assert!(
+            !o.contains("schema_version"),
+            "contract leaked into override"
+        );
     }
 
     #[test]

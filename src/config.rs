@@ -3,7 +3,7 @@
 //! PATH → name (no hardcoded paths or usernames).
 //!
 //! `Config::load()` resolves everything once per run. Per-setting precedence is
-//! flag > `GANDER_*` env > (config file, M6) > built-in default.
+//! flag > `GANDER_*` env > config file > built-in default.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -13,19 +13,28 @@ use std::path::{Path, PathBuf};
 pub const SENTINEL_BEGIN: &str = "===GANDER-BEGIN===";
 pub const SENTINEL_END: &str = "===GANDER-END===";
 
-// Exact agy model strings — a typo silently falls back to agy's default, so frozen.
-pub const FLASH: &str = "Gemini 3.5 Flash (High)";
-pub const PRO: &str = "Gemini 3.1 Pro (High)";
+// What gander's agy aliases run: `flash` and `pro`. These are agy slugs, as
+// printed by `agy models`, and they change when agy renames its models. agy does
+// not fail loudly on an unknown name: it prints its model list and exits 0, which
+// gander reports as `model_unknown`.
+// Both aliases use the Medium effort. The higher efforts can run for minutes on a
+// few seconds of audio.
+pub const FLASH: &str = "gemini-4-hydrogen-medium";
+pub const PRO: &str = "gemini-4-neon-medium";
 /// Chunk-prose synthesis runs on the cheapest reliable rung.
 pub const SYNTH_MODEL: &str = FLASH;
 
-// claude CLI model ids (a different namespace from agy).
-pub const CLAUDE_SONNET: &str = "claude-sonnet-4-6";
-pub const CLAUDE_HAIKU: &str = "claude-haiku-4-5";
-pub const CLAUDE_OPUS: &str = "claude-opus-4-8";
+// What gander's claude aliases run. claude has no command that lists its models;
+// `claude --model sonnet` shows the id an alias resolves to.
+pub const CLAUDE_SONNET: &str = "claude-sonnet-5-5";
+pub const CLAUDE_HAIKU: &str = "claude-haiku-5-5";
+pub const CLAUDE_OPUS: &str = "claude-opus-5-5";
+pub const CLAUDE_FABLE: &str = "claude-fable-5-2";
 
-// codex default model (Codex v0.130 reports `gpt-5.5`); we don't force `-m`.
-pub const CODEX_DEFAULT_MODEL: &str = "gpt-5.5";
+/// Stands for "pass no model flag": the harness then uses its own configured
+/// model. This is the codex default, because the codex model list depends on the
+/// account.
+pub const HARNESS_DEFAULT: &str = "default";
 
 // Video-tier thresholds (half-open, no overlap).
 pub const DIRECT_MAX_S: f64 = 30.0; // d <  DIRECT_MAX_S            -> DIRECT
@@ -39,15 +48,15 @@ pub const FRAME_LONG_EDGE: u32 = 1280;
 pub const JPEG_QV: u32 = 3;
 
 // Timeouts (seconds).
-pub const PRINT_TIMEOUT_S: f64 = 300.0;
+// The per-call limit is generous on purpose: the same model can answer a short
+// audio file in 40 s on one run and in almost 5 min on the next.
+pub const PRINT_TIMEOUT_S: f64 = 540.0;
 pub const CLAUDE_TIMEOUT_S: f64 = 180.0;
 pub const LADDER_DEADLINE_S: f64 = 700.0;
 pub const SYNTH_TIMEOUT_S: f64 = 120.0;
-// The probe sends the FULL report contract, so it costs what a real analysis
-// costs: agy/flash needs ~40s and agy/pro was measured at 51.8s. At the old 45s
-// agy could never pass --check while being perfectly healthy, and the failure
-// rendered as `down` — indistinguishable from a dead login. Keep this above the
-// slowest real backend, not merely above the fastest.
+// The `--check` probe sends the full report prompt, so it costs what a real
+// analysis costs (40 to 60 s on agy). A limit below that makes a healthy backend
+// show as down. Keep this above the slowest backend, not above the fastest.
 pub const CHECK_TIMEOUT_S: f64 = 120.0;
 
 pub const DB_BUSY_TIMEOUT_MS: i64 = 5000;
@@ -86,6 +95,10 @@ pub struct Config {
     pub jpeg_qv: u32,
     // db
     pub db_busy_timeout_ms: i64,
+    /// Where to keep the raw output of every backend attempt that did not give
+    /// an answer (`GANDER_RAW_DIR`). `None` keeps nothing. The deep check sets
+    /// it, so a failed probe leaves something to diagnose.
+    pub raw_dir: Option<PathBuf>,
 }
 
 /// Overrides supplied by CLI flags (highest precedence).
@@ -164,6 +177,10 @@ impl Config {
             frame_long_edge: FRAME_LONG_EDGE,
             jpeg_qv: JPEG_QV,
             db_busy_timeout_ms: DB_BUSY_TIMEOUT_MS,
+            raw_dir: env::var("GANDER_RAW_DIR")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(|s| expanduser(&s)),
         }
     }
 }

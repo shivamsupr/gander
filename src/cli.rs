@@ -1,4 +1,4 @@
-//! clap arg structs — the single CLI surface (PLAN.md §2).
+//! clap arg structs — the single CLI surface.
 //!
 //! `describe` is the default form (bare `gander SOURCE [opts]`); `recall` is a
 //! read-only cache-browse subcommand. stdout carries the result only; logs go to
@@ -12,41 +12,6 @@ pub enum OutputFormat {
     Raw,
     /// Canonical JSON envelope (the agent contract).
     Json,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Model {
-    // agy (Gemini)
-    Pro,
-    Flash,
-    // claude
-    Sonnet,
-    Haiku,
-    Opus,
-    // codex (OpenAI)
-    #[value(name = "gpt-5.5")]
-    Gpt55,
-    #[value(name = "gpt-5.4")]
-    Gpt54,
-    #[value(name = "gpt-5.4-mini")]
-    Gpt54Mini,
-}
-
-/// Fallback model selector — `none` disables the second attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum FallbackModel {
-    Pro,
-    Flash,
-    Sonnet,
-    Haiku,
-    Opus,
-    #[value(name = "gpt-5.5")]
-    Gpt55,
-    #[value(name = "gpt-5.4")]
-    Gpt54,
-    #[value(name = "gpt-5.4-mini")]
-    Gpt54Mini,
-    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -194,17 +159,18 @@ pub struct DescribeArgs {
     #[arg(long, value_name = "TEXT", conflicts_with = "ask")]
     pub prompt: Option<String>,
 
-    /// Primary model.
-    #[arg(long, value_enum)]
-    pub model: Option<Model>,
+    /// Primary model: a gander alias (`pro`, `flash`, `sonnet`, ...) or any model
+    /// name the backend accepts. `gander --models` lists them.
+    #[arg(long, value_name = "NAME")]
+    pub model: Option<String>,
 
     /// Primary backend.
     #[arg(long, value_enum)]
     pub backend: Option<Backend>,
 
     /// Model for the fallback attempt (`none` = no fallback).
-    #[arg(long, value_enum)]
-    pub fallback_model: Option<FallbackModel>,
+    #[arg(long, value_name = "NAME")]
+    pub fallback_model: Option<String>,
 
     /// Backend for the fallback attempt (`none` = no fallback).
     #[arg(long, value_enum)]
@@ -258,9 +224,31 @@ pub struct DescribeArgs {
     #[arg(long, value_name = "S")]
     pub timeout: Option<f64>,
 
-    /// Health-probe the backends (ignores SOURCE).
+    /// List the models each backend offers, with a class per model (ignores
+    /// SOURCE). Asks the backends for their live lists. `--backend` limits the
+    /// list to one backend.
+    #[arg(long)]
+    pub models: bool,
+
+    /// Health-probe the backends (ignores SOURCE). Alone, it sends one text
+    /// prompt per backend: that proves the login works, nothing more.
     #[arg(long)]
     pub check: bool,
+
+    /// With `--check`: run real media on your configured primary and on your
+    /// fallback, each one alone, and check the answers. KINDS is any of `image`,
+    /// `audio`, `video` (default: all three). Costs up to two real calls per kind.
+    #[arg(
+        long,
+        value_name = "KINDS",
+        requires = "check",
+        num_args = 0..=1,
+        require_equals = true,
+        value_delimiter = ',',
+        default_missing_value = "image,audio,video",
+        value_parser = ["image", "audio", "video"]
+    )]
+    pub deep: Option<Vec<String>>,
 
     /// Re-run the first-run interactive setup and rewrite ~/.gander/config.toml.
     #[arg(long)]

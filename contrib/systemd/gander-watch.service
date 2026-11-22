@@ -1,0 +1,21 @@
+# Runs the gander deep check once. Started by gander-watch.timer.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp gander-watch.service gander-watch.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now gander-watch.timer
+#
+# %h is your home folder. Set PATH so that gander, ffmpeg and your backend CLI
+# are found, and set GANDER_ALERT_CMD to the command that tells you about a
+# failure.
+
+[Unit]
+Description=gander deep check (image, audio, video)
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment="GANDER_ALERT_CMD=notify-send 'gander deep check failed'"
+ExecStart=%h/.local/bin/gander-watch.sh
+# One run can take several minutes when a backend is slow.
+TimeoutStartSec=45min

@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Understand a local media file: transcript + structured description, via an agentic CLI backend."
 license = "MIT"
+repository = "https://github.com/shivamsupr/gander"
+readme = "README.md"
+keywords = ["media", "transcript", "vision", "agents", "cli"]
+categories = ["command-line-utilities", "multimedia"]
 
 [[bin]]
 name = "gander"

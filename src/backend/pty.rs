@@ -251,7 +251,7 @@ mod tests {
             "-p".to_string(),
             "Reply with exactly the single word: pong".to_string(),
             "--model".to_string(),
-            "Gemini 3.5 Flash (High)".to_string(),
+            "Gemini 3.8 Flash (Medium)".to_string(),
             "--dangerously-skip-permissions".to_string(),
             "--print-timeout".to_string(),
             "40s".to_string(),

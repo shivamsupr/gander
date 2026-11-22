@@ -114,7 +114,13 @@ fn is_real_transcript(t: Option<&str>) -> bool {
 /// answer is not the canonical row for any member.
 pub fn describe_many(paths: &[String], opts: &DescribeOptions, cfg: &Config) -> MediaResult {
     match paths {
-        [] => MediaResult::failed(None, "no source given".into(), "input", String::new(), "unknown"),
+        [] => MediaResult::failed(
+            None,
+            "no source given".into(),
+            "input",
+            String::new(),
+            "unknown",
+        ),
         [one] => describe_media(one, opts, cfg),
         _ => describe_set(paths, opts, cfg),
     }
@@ -212,7 +218,8 @@ fn describe_set(paths: &[String], opts: &DescribeOptions, cfg: &Config) -> Media
     }
 
     // 3) set identity: the member hashes, in label order.
-    let set_sha = source::sha256_of_hashes(&items.iter().map(|i| i.sha.clone()).collect::<Vec<_>>());
+    let set_sha =
+        source::sha256_of_hashes(&items.iter().map(|i| i.sha.clone()).collect::<Vec<_>>());
 
     let work = match WorkDir::new(opts.keep_temp, cfg.allowed_root.as_deref()) {
         Ok(w) => w,
@@ -322,13 +329,22 @@ fn finish_set(
     } else {
         MediaKind::Video
     };
-    let (status, transcript, language, translation, extra) =
-        decide_status(kind, &synthetic, opts.want_transcript, &parsed, br.vision_only);
+    let (status, transcript, language, translation, extra) = decide_status(
+        kind,
+        &synthetic,
+        opts.want_transcript,
+        &parsed,
+        br.vision_only,
+    );
     base.warnings.extend(parsed.warnings.clone());
     base.warnings.extend(extra);
 
     if status == Status::Failed {
-        let first_w = base.warnings.first().cloned().unwrap_or_else(|| "unknown".into());
+        let first_w = base
+            .warnings
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "unknown".into());
         base.error = Some(format!("parse_failed: {first_w}"));
         base.error_class = Some("backend".to_string());
     }
@@ -638,8 +654,8 @@ fn finish(
     // parse and status rules do not apply. Return the sentinel-sliced answer
     // verbatim as the description.
     if prompt_override {
-        let answer = parse::extract_answer(&br.answer)
-            .unwrap_or_else(|| br.answer.trim().to_string());
+        let answer =
+            parse::extract_answer(&br.answer).unwrap_or_else(|| br.answer.trim().to_string());
         let mut all_warnings = warnings;
         all_warnings
             .push("prompt_override: standard report skipped; raw answer in description".into());

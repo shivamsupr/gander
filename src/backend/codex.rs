@@ -1,5 +1,4 @@
-//! codex adapter — `codex exec`, piped, agy-class modality. Resolved against the
-//! live Codex v0.130.0 probe (see PLAN.md §4 / §8):
+//! codex adapter — `codex exec`, piped, agy-class modality:
 //!
 //! - `exec` is the headless subcommand; the **prompt is positional** (no `-p`).
 //! - `--yolo` = `approval:never` + `sandbox:danger-full-access` (full bypass);
@@ -26,7 +25,7 @@ impl AgentBackend for Codex {
 
     /// `codex exec --yolo --skip-git-repo-check --color never
     /// -c model_reasoning_effort="low" -m <model> <prompt>`. `model` is a concrete
-    /// codex id (gpt-5.5 / gpt-5.4 / gpt-5.4-mini), resolved by `model_for`.
+    /// codex slug from the table in `models.rs`, resolved by `model_for`.
     fn build_argv(
         &self,
         prompt: &str,
@@ -44,7 +43,7 @@ impl AgentBackend for Codex {
             "-c".into(),
             "model_reasoning_effort=\"low\"".into(),
         ];
-        if !model.is_empty() {
+        if !model.is_empty() && model != crate::config::HARNESS_DEFAULT {
             argv.push("-m".into());
             argv.push(model.to_string());
         }
