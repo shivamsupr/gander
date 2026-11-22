@@ -14,39 +14,16 @@ pub enum OutputFormat {
     Json,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Model {
-    // agy (Gemini)
-    Pro,
-    Flash,
-    // claude
-    Sonnet,
-    Haiku,
-    Opus,
-    // codex (OpenAI)
-    #[value(name = "gpt-5.5")]
-    Gpt55,
-    #[value(name = "gpt-5.4")]
-    Gpt54,
-    #[value(name = "gpt-5.4-mini")]
-    Gpt54Mini,
+/// `--model` choices: every selector in the `models.rs` table.
+fn model_choices() -> clap::builder::PossibleValuesParser {
+    clap::builder::PossibleValuesParser::new(crate::models::all_selectors())
 }
 
-/// Fallback model selector — `none` disables the second attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum FallbackModel {
-    Pro,
-    Flash,
-    Sonnet,
-    Haiku,
-    Opus,
-    #[value(name = "gpt-5.5")]
-    Gpt55,
-    #[value(name = "gpt-5.4")]
-    Gpt54,
-    #[value(name = "gpt-5.4-mini")]
-    Gpt54Mini,
-    None,
+/// `--fallback-model` choices: the same list, plus `none` (no second attempt).
+fn fallback_model_choices() -> clap::builder::PossibleValuesParser {
+    let mut v = crate::models::all_selectors();
+    v.push("none");
+    clap::builder::PossibleValuesParser::new(v)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -194,17 +171,17 @@ pub struct DescribeArgs {
     #[arg(long, value_name = "TEXT", conflicts_with = "ask")]
     pub prompt: Option<String>,
 
-    /// Primary model.
-    #[arg(long, value_enum)]
-    pub model: Option<Model>,
+    /// Primary model. Each backend has its own list; see the README table.
+    #[arg(long, value_parser = model_choices(), hide_possible_values = true)]
+    pub model: Option<String>,
 
     /// Primary backend.
     #[arg(long, value_enum)]
     pub backend: Option<Backend>,
 
     /// Model for the fallback attempt (`none` = no fallback).
-    #[arg(long, value_enum)]
-    pub fallback_model: Option<FallbackModel>,
+    #[arg(long, value_parser = fallback_model_choices(), hide_possible_values = true)]
+    pub fallback_model: Option<String>,
 
     /// Backend for the fallback attempt (`none` = no fallback).
     #[arg(long, value_enum)]
@@ -257,6 +234,11 @@ pub struct DescribeArgs {
     /// Per-backend wall-clock seconds.
     #[arg(long, value_name = "S")]
     pub timeout: Option<f64>,
+
+    /// List every accepted model per backend, with its class (ignores SOURCE).
+    /// `--backend` limits the list to one backend.
+    #[arg(long)]
+    pub models: bool,
 
     /// Health-probe the backends (ignores SOURCE).
     #[arg(long)]

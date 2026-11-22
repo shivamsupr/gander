@@ -26,7 +26,7 @@ impl AgentBackend for Codex {
 
     /// `codex exec --yolo --skip-git-repo-check --color never
     /// -c model_reasoning_effort="low" -m <model> <prompt>`. `model` is a concrete
-    /// codex id (gpt-5.5 / gpt-5.4 / gpt-5.4-mini), resolved by `model_for`.
+    /// codex slug from the table in `models.rs`, resolved by `model_for`.
     fn build_argv(
         &self,
         prompt: &str,

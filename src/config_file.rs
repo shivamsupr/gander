@@ -71,13 +71,8 @@ pub fn maybe_first_run(no_config: bool, force: bool) -> Option<FileDefaults> {
 }
 
 /// The models valid for a backend, and that backend's default (first = default).
-fn models_for(backend: &str) -> &'static [&'static str] {
-    match backend {
-        "agy" => &["pro", "flash"],
-        "claude" => &["sonnet", "haiku", "opus"],
-        "codex" => &["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
-        _ => &[],
-    }
+fn models_for(backend: &str) -> Vec<&'static str> {
+    crate::models::selectors_for(backend)
 }
 
 /// Raw config file contents, or `None` if no file exists.
@@ -101,13 +96,13 @@ fn prompt_defaults() -> FileDefaults {
 
     // Backend first, then a model scoped to that backend → always a compatible pair.
     let backend = pick("Primary backend", &["agy", "claude", "codex"]);
-    let model = pick("Primary model", models_for(&backend));
+    let model = pick("Primary model", &models_for(&backend));
 
     let fb_backend = pick("Fallback backend", &["agy", "claude", "codex", "none"]);
     let fallback_model = if fb_backend == "none" {
         "none".to_string()
     } else {
-        pick("Fallback model", models_for(&fb_backend))
+        pick("Fallback model", &models_for(&fb_backend))
     };
 
     FileDefaults {
@@ -161,9 +156,9 @@ mod tests {
     fn models_scoped_to_backend() {
         // The interactive picker offers only the chosen backend's models, so a
         // saved (backend, model) pair is always compatible by construction.
-        assert_eq!(models_for("agy"), ["pro", "flash"]);
-        assert_eq!(models_for("claude"), ["sonnet", "haiku", "opus"]);
-        assert_eq!(models_for("codex"), ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]);
+        assert_eq!(models_for("agy")[..2], ["pro", "flash"]);
+        assert_eq!(models_for("claude"), ["sonnet", "haiku", "opus", "fable"]);
+        assert_eq!(models_for("codex")[0], "gpt-6.2-sol");
         assert!(models_for("nonsense").is_empty());
     }
 }

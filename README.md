@@ -85,7 +85,7 @@ just test-live      # optional. Makes one real agy call.
 - It makes one real backend call each, with the full report prompt. It allows 120
   seconds per backend (`CHECK_TIMEOUT_S`). agy takes 25 to 45 seconds, so a full check
   takes about a minute.
-- It always probes a **fixed model**: agy→flash, claude→sonnet, codex→gpt-5.5. A green
+- It always probes a **fixed model**: agy→flash, claude→sonnet, codex→gpt-6.2-sol. A green
   `agy` row does not prove that your configured `pro` model works.
 - A failed row prints the reason after the latency: `auth`, `timeout`, `empty`, or
   `fatal`. `timeout` means the probe ran out of time. It does not mean a broken login.
@@ -142,7 +142,7 @@ gander --version
 |---|---|---|
 | `SOURCE` | — | path to one local image, video, or audio file. No URLs |
 | `--output-format {raw,json}` | `raw` | `json` prints the envelope |
-| `--model {pro,flash,sonnet,haiku,opus,gpt-5.5,gpt-5.4,gpt-5.4-mini}` | `pro` | primary model |
+| `--model NAME` | `pro` | primary model. See the model table below |
 | `--backend {agy,claude,codex}` | `agy` | primary backend |
 | `--fallback-model {…,none}` | `flash` | model for the second try (same list, plus `none`) |
 | `--fallback-backend {…,none}` | `agy` | backend for the second try |
@@ -176,6 +176,26 @@ login means analysis is dead, not slower.
 
 `--fallback-model none` or `--fallback-backend none` switches the second try off. A pair
 that does not go together, such as `--backend agy --model sonnet`, is a usage error (`2`).
+
+### Models
+
+Each backend has its own model list. `gander --models` prints the full list with the
+class of each model. Add `--output-format json` for agents, or `--backend NAME` for one
+backend.
+
+| Class | `agy` | `claude` | `codex` |
+|---|---|---|---|
+| above-pro | none | `fable` | `gpt-6.2-astra`, `gpt-6-astra` |
+| pro | `pro` (runs `gemini-4-neon-medium`), `gemini-4-neon-*`, `claude-opus-5-5-*` | `opus` | `gpt-6.2-sol`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-5.6-sol` |
+| mid | `gemini-4-carbon-*` | none | `gpt-6.1-terra`, `gpt-5.6-terra` |
+| flash | `flash` (runs `gemini-4-hydrogen-medium`), `gemini-4-hydrogen-*`, `gemini-3.8-flash-*` | none | `gpt-6-luna`, `gpt-5.6-luna` |
+| unknown | `gemini-4-argon-*`, `gemini-pro-orchestrator*`, `claude-sonnet-5-5-*`, `gpt-oss-120b-medium` | `sonnet`, `haiku` | none |
+
+The `*` is the effort: `low`, `medium`, `high`, and for Neon and Hydrogen also `xhigh`.
+The default per backend is `pro` for agy, `sonnet` for claude, and `gpt-6.2-sol` for codex.
+
+The harnesses rename their models often. All names live in one table, `src/models.rs`.
+When a harness changes its list, edit that table and rebuild.
 
 ### Video tiers (picked automatically from the duration)
 

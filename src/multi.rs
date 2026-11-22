@@ -101,8 +101,7 @@ pub fn build_call(
                             p
                         }
                         None => {
-                            warnings
-                                .push(format!("item_skipped [{label}]: could not stage image"));
+                            warnings.push(format!("item_skipped [{label}]: could not stage image"));
                             continue;
                         }
                     },
@@ -122,7 +121,9 @@ pub fn build_call(
                     &cfg.ffmpeg_bin,
                 );
                 if frames.is_empty() {
-                    warnings.push(format!("item_skipped [{label}]: no frames could be extracted"));
+                    warnings.push(format!(
+                        "item_skipped [{label}]: no frames could be extracted"
+                    ));
                     continue;
                 }
                 let audio = if it.probe.has_audio_stream {
@@ -143,7 +144,10 @@ pub fn build_call(
                 match &audio {
                     Some(a) => {
                         any_audio = true;
-                        full.push(format!("{head}\n{frame_lines}\n- audio track: {}", a.display()));
+                        full.push(format!(
+                            "{head}\n{frame_lines}\n- audio track: {}",
+                            a.display()
+                        ));
                     }
                     None => full.push(format!("{head}\n{frame_lines}\n- audio track: none")),
                 }
@@ -180,7 +184,11 @@ pub fn build_call(
             prompt::build_multi_override_prompt(&items_vision, p),
         ),
         None => (
-            prompt::build_multi_prompt(&items_full, opts.want_transcript && any_audio, opts.translate),
+            prompt::build_multi_prompt(
+                &items_full,
+                opts.want_transcript && any_audio,
+                opts.translate,
+            ),
             prompt::build_multi_prompt(&items_vision, false, opts.translate),
         ),
     };
@@ -247,7 +255,10 @@ mod tests {
             v.extend((0..MAX_AUDIOS).map(|i| item(MediaKind::Audio, i)));
             v
         };
-        assert!(check_caps(&full_set()).is_ok(), "a full legal set must pass");
+        assert!(
+            check_caps(&full_set()).is_ok(),
+            "a full legal set must pass"
+        );
 
         for (kind, name) in [
             (MediaKind::Image, "images"),

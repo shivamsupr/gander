@@ -17,6 +17,7 @@ mod core;
 mod db;
 mod envelope;
 mod ffmpeg;
+mod models;
 mod multi;
 mod parse;
 mod prompt;
@@ -26,7 +27,7 @@ mod video;
 use clap::Parser;
 use std::process::ExitCode;
 
-use cli::{Backend, Cli, Command, Model, OutputFormat};
+use cli::{Backend, Cli, Command, OutputFormat};
 use config::{Config, ConfigOverrides};
 use core::DescribeOptions;
 use envelope::{MediaResult, Status};
@@ -180,7 +181,7 @@ fn overrides_from(args: &cli::DescribeArgs) -> ConfigOverrides {
         max_chunks: args.max_chunks,
         max_frames: args.max_frames,
         frame_fps: args.fps,
-        model_default: args.model.map(model_str),
+        model_default: args.model.clone(),
     }
 }
 
@@ -193,12 +194,15 @@ fn dispatch_describe(args: cli::DescribeArgs) -> ExitCode {
         }
         return ExitCode::from(EXIT_OK);
     }
+    if args.models {
+        return cmd_models(&args);
+    }
     if args.check {
         return cmd_check(&args);
     }
     let sources = args.sources.clone();
     if sources.is_empty() {
-        eprintln!("gander: SOURCE is required (or use --check / --version / recall)");
+        eprintln!("gander: SOURCE is required (or use --check / --models / --version / recall)");
         return ExitCode::from(EXIT_USAGE);
     }
 
@@ -216,7 +220,7 @@ fn dispatch_describe(args: cli::DescribeArgs) -> ExitCode {
 
     // Per-setting precedence: flag > GANDER_* env > config file > built-in.
     let model = pick(
-        args.model.map(model_str),
+        args.model.clone(),
         "GANDER_MODEL_DEFAULT",
         file.model,
         "pro",
@@ -228,7 +232,7 @@ fn dispatch_describe(args: cli::DescribeArgs) -> ExitCode {
         "agy",
     );
     let fb_model = pick(
-        args.fallback_model.map(fallback_model_str),
+        args.fallback_model.clone(),
         "GANDER_FALLBACK_MODEL_DEFAULT",
         file.fallback_model,
         "flash",
@@ -340,6 +344,39 @@ fn tri(yes: bool, no: bool) -> Option<bool> {
     } else {
         None
     }
+}
+
+fn cmd_models(args: &cli::DescribeArgs) -> ExitCode {
+    let which = args.backend.map(|b| match b {
+        Backend::Agy => backend::BackendKind::Agy,
+        Backend::Claude => backend::BackendKind::Claude,
+        Backend::Codex => backend::BackendKind::Codex,
+    });
+    let list = models::listing(which);
+    match args.output_format {
+        OutputFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&list).unwrap_or_else(|_| "{}".into())
+        ),
+        OutputFormat::Raw => {
+            for (backend, rows) in list.as_object().into_iter().flatten() {
+                println!("{backend}");
+                for r in rows.as_array().into_iter().flatten() {
+                    let s = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("");
+                    let (name, runs) = (s("name"), s("runs"));
+                    let mut line = format!("  {name:<30} {:<10}", s("class"));
+                    if runs != name {
+                        line.push_str(&format!(" runs {runs}"));
+                    }
+                    if r.get("default").and_then(|v| v.as_bool()) == Some(true) {
+                        line.push_str(" (default)");
+                    }
+                    println!("{}", line.trim_end());
+                }
+            }
+        }
+    }
+    ExitCode::from(EXIT_OK)
 }
 
 fn cmd_check(args: &cli::DescribeArgs) -> ExitCode {
@@ -490,47 +527,27 @@ fn exit_for(r: &MediaResult) -> u8 {
 /// Each backend has its own model namespace; an explicit cross-namespace pair is a
 /// usage error. Checks both the primary and (if set) the fallback pair.
 fn validate_pairs(args: &cli::DescribeArgs) -> Result<(), String> {
-    if let (Some(b), Some(m)) = (args.backend, args.model) {
-        check_pair(&backend_str(b), &model_str(m))?;
+    if let (Some(b), Some(m)) = (args.backend, args.model.as_deref()) {
+        check_pair(&backend_str(b), m)?;
     }
-    if let (Some(b), Some(m)) = (args.fallback_backend, args.fallback_model) {
-        let (bs, ms) = (fallback_backend_str(b), fallback_model_str(m));
+    if let (Some(b), Some(ms)) = (args.fallback_backend, args.fallback_model.as_deref()) {
+        let bs = fallback_backend_str(b);
         if bs != "none" && ms != "none" {
-            check_pair(&bs, &ms)?;
+            check_pair(&bs, ms)?;
         }
     }
     Ok(())
 }
 
 fn check_pair(backend: &str, model: &str) -> Result<(), String> {
-    let ok = match backend {
-        "agy" => matches!(model, "pro" | "flash"),
-        "claude" => matches!(model, "sonnet" | "haiku" | "opus"),
-        "codex" => matches!(model, "gpt-5.5" | "gpt-5.4" | "gpt-5.4-mini"),
-        _ => true,
-    };
-    if ok {
+    if models::valid_pair(backend, model) {
         Ok(())
     } else {
         Err(format!(
-            "backend {backend} is incompatible with model {model} \
-             (agy: pro|flash; claude: sonnet|haiku|opus; codex: gpt-5.5|gpt-5.4|gpt-5.4-mini)"
+            "backend {backend} is incompatible with model {model} ({backend} models: {})",
+            models::selectors_for(backend).join("|")
         ))
     }
-}
-
-fn model_str(m: Model) -> String {
-    match m {
-        Model::Pro => "pro",
-        Model::Flash => "flash",
-        Model::Sonnet => "sonnet",
-        Model::Haiku => "haiku",
-        Model::Opus => "opus",
-        Model::Gpt55 => "gpt-5.5",
-        Model::Gpt54 => "gpt-5.4",
-        Model::Gpt54Mini => "gpt-5.4-mini",
-    }
-    .to_string()
 }
 
 fn backend_str(b: Backend) -> String {
@@ -538,22 +555,6 @@ fn backend_str(b: Backend) -> String {
         Backend::Agy => "agy",
         Backend::Claude => "claude",
         Backend::Codex => "codex",
-    }
-    .to_string()
-}
-
-fn fallback_model_str(m: cli::FallbackModel) -> String {
-    use cli::FallbackModel::*;
-    match m {
-        Pro => "pro",
-        Flash => "flash",
-        Sonnet => "sonnet",
-        Haiku => "haiku",
-        Opus => "opus",
-        Gpt55 => "gpt-5.5",
-        Gpt54 => "gpt-5.4",
-        Gpt54Mini => "gpt-5.4-mini",
-        None => "none",
     }
     .to_string()
 }

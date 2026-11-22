@@ -245,9 +245,7 @@ pub fn route_video(
             // The merge synthesis only sees per-chunk text, so a caller question
             // cannot be answered from the media itself on this tier.
             if opts.ask.is_some() {
-                warnings.push(
-                    "ask_ignored: chunked video (>60s) does not support --ask".into(),
-                );
+                warnings.push("ask_ignored: chunked video (>60s) does not support --ask".into());
             }
             // Widen chunk length so total chunks <= max_chunks (widen, do not truncate).
             let mut eff_chunk_len = chunk_length;

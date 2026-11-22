@@ -13,25 +13,28 @@ use std::path::{Path, PathBuf};
 pub const SENTINEL_BEGIN: &str = "===GANDER-BEGIN===";
 pub const SENTINEL_END: &str = "===GANDER-END===";
 
-// Exact agy model strings — a typo silently falls back to agy's default, so frozen.
-// Check them against `agy models` when a probe fails with "not recognized as a
-// known model". On 2026-10-20 agy dropped every Pro model and renamed Flash to
-// 3.8, which took the whole fleet's media analysis down until these were updated.
-// Both aliases resolve to the Medium effort: measured on the audio probe the same
-// day, Medium answered in 39 s and High was still thinking at 5 min, past
-// PRINT_TIMEOUT_S, so High is unusable here.
-pub const FLASH: &str = "Gemini 3.8 Flash (Medium)";
-pub const PRO: &str = "Gemini 3.8 Flash (Medium)";
+// agy model slugs. Check them against `agy models` when a run fails.
+// An unknown name does not fail loudly: agy prints its model list and exits 0, so
+// gander reports `empty`. On 2026-10-20 agy dropped every Pro model and renamed
+// Flash to 3.8, which took the whole fleet's media analysis down, and both aliases
+// then ran Gemini 3.8 Flash (Medium) as a stopgap.
+// Since 2026-11-22 the aliases match their class again: Neon is the pro-class
+// family and Hydrogen the flash-class one. Both use the Medium effort. Measured
+// that day on a 5 s speech file: Neon Medium 43 s (exact transcript), Hydrogen
+// Medium 27 s (one word misheard). The High efforts are not measured; on 3.8
+// Flash, High ran past 5 min on audio.
+pub const FLASH: &str = "gemini-4-hydrogen-medium";
+pub const PRO: &str = "gemini-4-neon-medium";
 /// Chunk-prose synthesis runs on the cheapest reliable rung.
 pub const SYNTH_MODEL: &str = FLASH;
 
 // claude CLI model ids (a different namespace from agy).
-pub const CLAUDE_SONNET: &str = "claude-sonnet-4-6";
-pub const CLAUDE_HAIKU: &str = "claude-haiku-4-5";
-pub const CLAUDE_OPUS: &str = "claude-opus-4-8";
-
-// codex default model (Codex v0.130 reports `gpt-5.5`); we don't force `-m`.
-pub const CODEX_DEFAULT_MODEL: &str = "gpt-5.5";
+// Updated 2026-11-22 to the ids the `sonnet` / `haiku` / `opus` / `fable` aliases
+// of claude 2.1.326 resolve to. The codex ids and the agy slugs live in `models.rs`.
+pub const CLAUDE_SONNET: &str = "claude-sonnet-5-5";
+pub const CLAUDE_HAIKU: &str = "claude-haiku-5-5";
+pub const CLAUDE_OPUS: &str = "claude-opus-5-5";
+pub const CLAUDE_FABLE: &str = "claude-fable-5-2";
 
 // Video-tier thresholds (half-open, no overlap).
 pub const DIRECT_MAX_S: f64 = 30.0; // d <  DIRECT_MAX_S            -> DIRECT
@@ -45,7 +48,7 @@ pub const FRAME_LONG_EDGE: u32 = 1280;
 pub const JPEG_QV: u32 = 3;
 
 // Timeouts (seconds).
-// 540 s since 2026-10-23: Gemini 3.8 Flash (Medium) takes 40 s to 4m40s+ on the
+// 540 s since 2026-10-23: Gemini 3.8 Flash (Medium) took 40 s to 4m40s+ on the
 // 2.6 s audio probe; at 300 s half the gander-watch runs needed a retry.
 pub const PRINT_TIMEOUT_S: f64 = 540.0;
 pub const CLAUDE_TIMEOUT_S: f64 = 180.0;

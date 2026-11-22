@@ -19,7 +19,8 @@ use std::time::Duration;
 
 use regex::Regex;
 
-use crate::config::{Config, CLAUDE_HAIKU, CLAUDE_OPUS, CLAUDE_SONNET, FLASH, PRO};
+use crate::config::Config;
+pub use crate::models::model_for;
 use crate::parse;
 
 /// Precisely classified backend outcome.
@@ -225,28 +226,6 @@ pub fn backend_for(kind: BackendKind, cfg: &Config) -> Box<dyn AgentBackend> {
         BackendKind::Codex => Box::new(codex::Codex {
             bin: cfg.codex_bin.clone(),
         }),
-    }
-}
-
-/// Map a gander model selector to a backend's concrete model string.
-pub fn model_for(kind: BackendKind, selector: &str) -> String {
-    match kind {
-        BackendKind::Agy => match selector {
-            "flash" | "auto" => FLASH,
-            _ => PRO,
-        }
-        .to_string(),
-        BackendKind::Claude => match selector {
-            "haiku" => CLAUDE_HAIKU,
-            "opus" => CLAUDE_OPUS,
-            _ => CLAUDE_SONNET,
-        }
-        .to_string(),
-        BackendKind::Codex => match selector {
-            "gpt-5.5" | "gpt-5.4" | "gpt-5.4-mini" => selector.to_string(),
-            // A non-codex selector (e.g. the default "pro") → codex's own default.
-            _ => crate::config::CODEX_DEFAULT_MODEL.to_string(),
-        },
     }
 }
 
