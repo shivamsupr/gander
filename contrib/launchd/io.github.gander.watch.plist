@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Runs the gander deep check every 6 hours on macOS.
+
+  1. Replace every /Users/YOU with your home folder. launchd does not expand ~.
+  2. Set PATH so that gander, ffmpeg and your backend CLI are found. launchd
+     starts with /usr/bin:/bin:/usr/sbin:/sbin only.
+  3. Set GANDER_ALERT_CMD to the command that tells you about a failure.
+  4. cp io.github.gander.watch.plist ~/Library/LaunchAgents/
+     launchctl load ~/Library/LaunchAgents/io.github.gander.watch.plist
+
+  Keep the script outside ~/Documents, ~/Desktop and ~/Downloads. macOS blocks a
+  LaunchAgent from reading those folders, and the job then exits with 126.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.github.gander.watch</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>/Users/YOU/.local/bin/gander-watch.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/YOU/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>GANDER_ALERT_CMD</key>
+    <string>osascript -e 'display notification "gander deep check failed" with title "gander"'</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>21600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/tmp/io.github.gander.watch.err</string>
+</dict>
+</plist>
